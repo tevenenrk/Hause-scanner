@@ -11,6 +11,7 @@ import {
 } from './geometry.js';
 import {
   History, createFurniture, createOpening, createRoom, findFurniture, snapshotScanned, projectToJSON, projectFromJSON, uid,
+  mergeFurniture,
 } from './model.js';
 import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from './labels.js';
 import { saveProject } from './store.js';
@@ -41,6 +42,7 @@ export class Editor {
     this.mode = 'furniture';
     this.view = '3d';
     this.selection = null;
+    this.extra = new Set(); // dodatkowo zaznaczone meble (Shift/Ctrl+klik)
     this.opts = { showMesh: false, showGhosts: true, showLabels: true, showZones: true, snap: true, wallMode: 'low' };
     this.conflicts = new Map();
     this.measure = [];
@@ -136,6 +138,10 @@ export class Editor {
   }
 
   get camera() { return this.view === 'top' ? this.ortho : this.persp; }
+  /** Opcje widoku z uwzględnieniem trybu „Makieta”. */
+  get viewOpts() {
+    return this.view === 'model' ? { ...this.opts, wallMode: 'full', showLabels: false, showGhosts: false, showZones: false } : this.opts;
+  }
   get activeControls() { return this.view === 'top' ? this.controlsTop : this.controls3d; }
 
   resize() {
@@ -213,7 +219,7 @@ export class Editor {
   /** Pełne odświeżenie po zmianie (przebudowa sceny, paneli). */
   refresh() {
     this.computeAllConflicts();
-    this.view3d.setOptions({ ...this.opts, selection: this.selection, selectedId: this.selection && this.selection.kind === 'furniture' ? this.selection.id : null, conflicts: this.conflicts, mode: this.mode });
+    this.view3d.setOptions({ ...this.viewOpts, selection: this.selection, selectedId: this.selection && this.selection.kind === 'furniture' ? this.selection.id : null, selectedIds: this.extra, conflicts: this.conflicts, mode: this.mode });
     this.view3d.rebuild(this.project);
     this.updateOverlay();
     this.renderPanels();
@@ -271,6 +277,7 @@ export class Editor {
   }
 
   validateSelection() {
+    for (const id of [...this.extra]) if (!findFurniture(this.project, id)) this.extra.delete(id);
     const s = this.selection;
     if (!s) return;
     const room = s.roomId && this.project.rooms.find((r) => r.id === s.roomId);
@@ -292,9 +299,42 @@ export class Editor {
     return { room };
   }
 
-  select(sel) {
+  select(sel, { keepExtra = false } = {}) {
     this.selection = sel;
+    if (!keepExtra) this.extra.clear();
     this.refresh();
+  }
+
+  /** Shift/Ctrl+klik: dodaje/usuwa mebel z zaznaczenia wielokrotnego. */
+  toggleExtra(id) {
+    const s = this.selection;
+    if (!s || s.kind !== 'furniture') return this.select({ kind: 'furniture', id });
+    if (id === s.id) {
+      // odznacz główny: następny z dodatkowych staje się głównym
+      const next = [...this.extra][0];
+      if (!next) return this.select(null);
+      this.extra.delete(next);
+      this.selection = { kind: 'furniture', id: next };
+    } else if (this.extra.has(id)) this.extra.delete(id);
+    else this.extra.add(id);
+    this.refresh();
+  }
+
+  selectedFurnitureIds() {
+    const s = this.selection;
+    if (!s || s.kind !== 'furniture') return [];
+    return [s.id, ...this.extra];
+  }
+
+  mergeSelected() {
+    const ids = this.selectedFurnitureIds();
+    if (ids.length < 2) return this.toast('Zaznacz co najmniej 2 bryły (Shift/Ctrl + klik).');
+    const merged = mergeFurniture(this.project, ids);
+    if (!merged) return;
+    this.extra.clear();
+    this.selection = { kind: 'furniture', id: merged.id };
+    this.commit();
+    this.toast(`Scalono ${ids.length} bryły w „${merged.name}” (Ctrl+Z cofa).`);
   }
 
   // ======================= tryby i widoki =======================
@@ -306,7 +346,7 @@ export class Editor {
     if (mode === 'rooms' && this.selection && this.selection.kind !== 'room') this.selection = null;
     for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('active', b.dataset.mode === mode);
     const hints = {
-      furniture: 'Kliknij mebel, aby go zaznaczyć. Przeciągnij, aby przesunąć. <R> obrót o 15°, Shift+R w drugą stronę, strzałki = 1 cm, Del = usuń, H = ukryj. Alt podczas przeciągania wyłącza przyciąganie.',
+      furniture: 'Kliknij mebel, aby go zaznaczyć, przeciągnij, aby przesunąć. Shift/Ctrl + klik zaznacza kilka (np. do scalenia). R obrót o 15°, strzałki = 1 cm, Del = usuń, H = ukryj. Alt wyłącza przyciąganie.',
       walls: 'Przeciągaj narożniki (kropki), aby poprawić obrys. Kliknij ścianę, aby zmienić jej długość lub przesunąć ją. Drzwi i okna przeciągaj wzdłuż ściany.',
       rooms: 'Przeciągnij pokój, aby ułożyć mieszkanie. Obrót i dokładna pozycja w panelu po prawej.',
       measure: 'Miarka: kliknij dwa punkty (podłoga, mebel, ściana). Esc czyści pomiary.',
@@ -316,9 +356,17 @@ export class Editor {
   }
 
   setView(view) {
+    const prev = this.view;
     this.view = view;
-    this.controls3d.enabled = view === '3d';
+    this.controls3d.enabled = view !== 'top';
     this.controlsTop.enabled = view === 'top';
+    this.controls3d.autoRotate = view === 'model';
+    this.controls3d.autoRotateSpeed = 1.2;
+    if (!this.autoRotateBound) {
+      this.autoRotateBound = true;
+      this.controls3d.addEventListener('start', () => { this.controls3d.autoRotate = false; });
+    }
+    if (this.project && (prev === 'model') !== (view === 'model')) this.refresh();
     for (const b of document.querySelectorAll('[data-view]')) b.classList.toggle('active', b.dataset.view === view);
     this.resize();
   }
@@ -457,7 +505,13 @@ export class Editor {
         const { id, roomId } = hit.object.userData;
         const room = this.room(roomId);
         const f = room.furniture.find((x) => x.id === id);
-        if (!this.selection || this.selection.id !== id) this.select({ kind: 'furniture', id });
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          this.toggleExtra(id);
+          this.stopControls(e);
+          return;
+        }
+        if (!this.selection || (this.selection.id !== id && !this.extra.has(id))) this.select({ kind: 'furniture', id });
+        else if (this.extra.has(id)) { this.extra.delete(id); this.extra.add(this.selection.id); this.select({ kind: 'furniture', id }, { keepExtra: true }); }
         const fp = this.floorHit();
         if (fp) {
           const local = worldToRoom(room, [fp.x, fp.z]);
@@ -653,6 +707,15 @@ export class Editor {
     const s = this.selection;
     if (!s) return;
     if (s.kind === 'furniture') {
+      const ids = this.selectedFurnitureIds();
+      if (ids.length > 1) {
+        for (const room of this.project.rooms) room.furniture = room.furniture.filter((f) => !ids.includes(f.id));
+        this.extra.clear();
+        this.toast(`Usunięto ${ids.length} mebli (Ctrl+Z cofa)`);
+        this.selection = null;
+        this.commit();
+        return;
+      }
       const found = findFurniture(this.project, s.id);
       if (!found) return;
       found.room.furniture = found.room.furniture.filter((f) => f.id !== s.id);
@@ -945,7 +1008,7 @@ export class Editor {
         const hard = conf.some((c) => c.kind !== 'door');
         const badge = hard ? '<span class="badge conflict" title="Koliduje">!</span>' : conf.length ? '<span class="badge warn" title="W strefie drzwi">!</span>' : '';
         const unv = f.verified ? '' : '<span class="badge unverified" title="Do potwierdzenia">?</span>';
-        const sel = s && s.kind === 'furniture' && s.id === f.id;
+        const sel = (s && s.kind === 'furniture' && s.id === f.id) || this.extra.has(f.id);
         return `<div class="item ${sel ? 'selected' : ''} ${f.hidden ? 'hidden-item' : ''}" data-fid="${f.id}" title="Dwuklik: pokaż na widoku">
           <span class="nm">${esc(f.name)}</span>${unv}${badge}
           <button class="eye" data-eye="${f.id}" title="${f.hidden ? 'Pokaż' : 'Ukryj (np. mebel tymczasowy)'}">${f.hidden ? '◌' : '●'}</button></div>`;
@@ -969,7 +1032,8 @@ export class Editor {
     const it = e.target.closest('[data-fid]');
     if (it) {
       if (this.mode !== 'furniture') this.setMode('furniture');
-      this.select({ kind: 'furniture', id: it.dataset.fid });
+      if (e.shiftKey || e.ctrlKey || e.metaKey) this.toggleExtra(it.dataset.fid);
+      else this.select({ kind: 'furniture', id: it.dataset.fid });
       return;
     }
     const rt = e.target.closest('[data-rid]');
@@ -1065,7 +1129,18 @@ export class Editor {
     const sel = this.selected();
     let html = '';
     const num = (key, val, step = 1, attrs = '') => `<input type="number" data-k="${key}" value="${val}" step="${step}" ${attrs}>`;
-    if (s && s.kind === 'furniture' && sel && sel.f) {
+    if (s && s.kind === 'furniture' && this.extra.size) {
+      const items = this.selectedFurnitureIds().map((id) => findFurniture(this.project, id)).filter(Boolean);
+      html = `
+        <h2>Zaznaczono: ${items.length}</h2>
+        <div class="note">${items.map((it) => `${esc(it.f.name)} (${Math.round(it.f.w * 100)}×${Math.round(it.f.d * 100)}×${Math.round(it.f.h * 100)})`).join('<br>')}</div>
+        <p class="note">Skaner czasem rozpoznaje jeden mebel jako kilka brył. „Scal” zastąpi je jedną bryłą, która obejmuje wszystkie zaznaczone.</p>
+        <div class="btns">
+          <button class="primary" data-act="merge">⧉ Scal w jeden mebel</button>
+          <button data-act="clearExtra">Odznacz</button>
+          <button class="danger" data-act="del">🗑 Usuń zaznaczone</button>
+        </div>`;
+    } else if (s && s.kind === 'furniture' && sel && sel.f) {
       const f = sel.f;
       const conf = this.conflicts.get(f.id) || [];
       const clear = f.hidden ? [] : computeClearances(sel.room, f);
@@ -1109,6 +1184,7 @@ export class Editor {
         <div class="row"><span>Potwierdzony</span><label><input type="checkbox" data-k="verified" ${f.verified ? 'checked' : ''}> typ sprawdzony</label></div>
         <div class="row"><span>Notatki</span><textarea data-k="notes">${esc(f.notes)}</textarea></div>
         <div class="btns">
+          <button data-act="mergeHint" title="Shift/Ctrl + klik zaznacza kilka brył">⧉ Scal z…</button>
           <button data-act="dup">⧉ Duplikuj</button>
           ${sc ? '<button data-act="resetScan" title="Przywróć pozycję i wymiary ze skanu">↺ Jak w skanie</button>' : ''}
           <button class="danger" data-act="del">🗑 Usuń</button>
@@ -1259,6 +1335,9 @@ export class Editor {
         break;
       }
       case 'dup': this.duplicateSelected(); break;
+      case 'merge': this.mergeSelected(); break;
+      case 'mergeHint': this.toast('Przytrzymaj Shift lub Ctrl i kliknij drugą bryłę (na widoku albo na liście), potem „Scal w jeden mebel”.'); break;
+      case 'clearExtra': this.extra.clear(); this.refresh(); break;
       case 'resetScan': Object.assign(sel.f, sel.f.scanned); this.commit(); break;
       case 'del': this.deleteSelected(); break;
       case 'edgeShift': {

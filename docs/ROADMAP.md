@@ -12,9 +12,14 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - [x] Wiele pokoi w jednym projekcie + ręczne układanie pokoi w mieszkanie (tryb „Pokoje”); przenoszenie mebla między pokojami.
 - [x] Automatyczne dopasowanie sąsiedniego pokoju, jeśli Quest w tej samej sesji udostępnia podłogi kilku pokoi.
 - [x] Eksport JSON (pełny projekt) i GLB (model 3D do Blendera itp.), import pokoi z pliku.
+- [x] Podgląd trójkątów skanu (siatka Space Setup) na żywo podczas skanowania i edycji w MR.
+- [x] Tryb bez granicy (`unbounded`) z powrotem do `local-floor`; nakładka chowa się przy oknach systemowych.
+- [x] Makieta: na PC widok „🏠 Makieta”, w goglach miniatura mieszkania (obrót, skala, przesuwanie, edycja mebli w miniaturze).
+- [x] Scalanie kilku brył w jeden mebel (PC: Shift/Ctrl + klik, MR: „Scal z…”).
 
 ## Etap 2 — całe mieszkanie
 - [ ] Sprawdzić na prawdziwym Queście 3S, czy Space Setup udostępnia w przeglądarce kilka pokoi naraz (multi-room). Jeśli tak — skan całego mieszkania w jednej sesji i automatyczne ułożenie.
+- [ ] Sprawdzić na Queście 3S, czy `unbounded` usuwa prośbę o strefę i czy podłoga (y) jest poprawna w tym trybie.
 - [ ] Jeśli nie — pokój po pokoju + półautomatyczne łączenie: przyciąganie pokoi po wspólnych drzwiach / równoległych ścianach (grubość ściany jako parametr).
 - [ ] Synchronizacja projektu między Questem a PC bez ręcznego eksportu (np. link/QR + prosty serwer albo GitHub Gist — do decyzji ze względu na prywatność).
 
@@ -25,7 +30,7 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - Uwaga: mapa robota jest 2D i widzi tylko podłogę pod meblami do wysokości robota — dobrze uzupełnia skan Questa (obrys), ale nie zastąpi wysokości ani mebli.
 
 ## Etap 4 — zdjęcia i tekstury
-- [ ] Dodawanie zdjęć pokoi do projektu (z telefonu / z passthrough Questa przez Passthrough Camera API w wersji natywnej).
+- [ ] Dodawanie zdjęć pokoi do projektu: z telefonu albo automatycznie w trakcie skanu przez WebXR `camera-access` (działa w projekcie `tevenenrk/room-scanner`: `src/photo-capture.js` i `src/photo-texture.js`, do przeniesienia).
 - [ ] Claude (vision) rozpoznaje materiały i kolory: ściany, podłoga (panele / płytki), fronty mebli → przypisanie materiałów do elementów modelu.
 - [ ] Tekstury: kafelkowalne tekstury podłóg/ścian (generowane lub z biblioteki PBR), kolor/tekstura mebli na podstawie zdjęć.
 - [ ] Opcjonalnie: dokładniejsze modele wybranych mebli (fotogrametria / Gaussian splatting z telefonu) wstawiane w miejsce bryłek.

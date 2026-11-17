@@ -161,6 +161,7 @@ function startXR(mode, editor) {
     project,
     mode,
     roomId,
+    unbounded: !new URLSearchParams(location.search).has('bounded'),
     onSave: (p) => {
       clearTimeout(xrSaveTimer);
       xrSaveTimer = setTimeout(() => saveProject(p).catch((e) => console.error(e)), 800);

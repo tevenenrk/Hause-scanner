@@ -8,11 +8,15 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 
 **Skan (na Queście)**
 - odczytuje pokój z systemowej **Konfiguracji przestrzeni (Space Setup)**: podłogę, ściany, sufit, drzwi, okna i meble,
-- zamienia go na prosty model: obrys pokoju, wysokość, otwory i meble jako bryłki,
+- **pokazuje na żywo trójkąty skanu** (siatkę Space Setup), płaszczyzny i bryły mebli. Tam, gdzie nie ma trójkątów, pokój nie jest zeskanowany,
+- działa w trybie **bez granicy** (przestrzeń `unbounded` przeglądarki Questa), więc możesz chodzić po mieszkaniu. Gdy gogle go nie udostępnią, aplikacja wraca do zwykłego trybu z granicą,
+- zamienia skan na prosty model: obrys pokoju, wysokość, otwory i meble jako bryłki,
 - po zapisie **dopytuje**, co to za przedmiot („Co to jest? Stół / Kanapa / …”), i pozwala oznaczyć mebel jako tymczasowy albo usunąć go.
 
 **Edytor (PC lub przeglądarka Questa)**
 - przesuwanie mebli myszą (przyciąganie do ścian), obrót, zmiana wymiarów, kształty: prostopadłościan, L (narożnik) i walec,
+- **scalanie brył**: Shift/Ctrl + klik zaznacza kilka brył, a „Scal w jeden mebel” zamienia je w jedną (gdy skaner podzielił mebel na części),
+- **🏠 Makieta**: widok całego mieszkania z pełnymi ścianami, który sam się obraca (myszą obracasz i przybliżasz),
 - **kolizje**: czerwony = mebel nachodzi na inny mebel lub wystaje za ścianę, pomarańczowy = stoi w strefie otwierania drzwi,
 - **wolne miejsce wokół** zaznaczonego mebla (ile cm do ściany lub do najbliższego mebla),
 - przerywany obrys pokazuje, gdzie mebel stał w skanie („↺ Jak w skanie” przywraca tę pozycję),
@@ -23,7 +27,9 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 **Edycja w MR (na Queście)**
 - model nakłada się na prawdziwy pokój (dopasowanie po podłodze ze Space Setup) z możliwością ręcznego wyrównania,
 - chwytanie mebli promieniem kontrolera albo szczypnięciem, obrót gałką,
-- panel 3D: obrót, wymiary ±1/±5 cm, dosuwanie do ściany, typ, duplikowanie, ukrywanie, usuwanie, cofanie, dodawanie mebli.
+- panel 3D: obrót, wymiary ±1/±5 cm, dosuwanie do ściany, typ, **scalanie** („Scal z…”, potem wskazujesz drugą bryłę), duplikowanie, ukrywanie, usuwanie, cofanie, dodawanie mebli,
+- **🏠 Makieta w goglach**: miniatura mieszkania przed Tobą. Gałka obraca (lewo/prawo) i skaluje (góra/dół), spust na podłodze makiety ją przesuwa, a meble chwytasz i przesuwasz także w miniaturze,
+- trójkąty skanu na żywo (można wyłączyć).
 
 ## Jak uruchomić
 
@@ -51,6 +57,14 @@ Potem otwórz `http://localhost:8080`.
 6. Kolejny pokój: przejdź do niego, zrób dla niego Space Setup i znowu **Skanuj pokój**. W edytorze, w trybie **Pokoje**, ułożysz pokoje względem siebie.
 
 **Grip** (przycisk chwytu) przywołuje panel przed oczy.
+
+### Granica (strefa stacjonarna / całopokojowa)
+
+Aplikacja prosi przeglądarkę o przestrzeń **bez granicy** (`unbounded`). Panel skanu pokazuje, który tryb jest aktywny („Tryb bez granicy” albo „Przestrzeń: local-floor”).
+
+- Jeśli Quest mimo to prosi o strefę, wybierz **całopokojową**. Najpewniej jest jednak wykonać **Konfigurację przestrzeni w Ustawieniach gogli przed otwarciem strony**. Tam system pokazuje własną animację skanowania (trójkąty) i rysowanie granicy działa normalnie.
+- Gdy system wyświetla własne okno (Space Setup, granica, menu), aplikacja chowa swoją nakładkę, żeby niczego nie zasłaniać.
+- Klasyczny tryb z granicą możesz wymusić, dodając `?bounded` do adresu.
 
 ### Przeniesienie projektu Quest ↔ PC
 

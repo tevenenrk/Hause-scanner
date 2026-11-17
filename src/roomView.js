@@ -333,7 +333,7 @@ export class ApartmentView {
       const warn = !hard && list.length > 0;
       mesh.material.emissive.setHex(hard ? COLOR_CONFLICT : warn ? COLOR_WARN : 0x000000);
       mesh.material.emissiveIntensity = hard || warn ? 0.55 : 0;
-      const sel = id === selectedId;
+      const sel = id === selectedId || !!(this.options.selectedIds && this.options.selectedIds.has(id));
       edges.material.color.setHex(sel ? COLOR_SELECTED : hard ? COLOR_CONFLICT : 0x222222);
       edges.material.opacity = sel ? 1 : this.mode === 'mr' ? 0.9 : 0.5;
       edges.material.linewidth = sel ? 2 : 1;

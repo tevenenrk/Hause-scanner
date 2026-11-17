@@ -1,6 +1,6 @@
 // Model danych: projekt (mieszkanie) -> pomieszczenia -> meble / otwory.
 import { FURNITURE_TYPES, typeName, typeColor } from './labels.js';
-import { ensurePositive, polygonArea } from './geometry.js';
+import { ensurePositive, polygonArea, furnitureOutline, minAreaRect, roomToWorld, worldToRoom } from './geometry.js';
 
 export const MODEL_VERSION = 1;
 
@@ -83,6 +83,41 @@ export function findFurniture(project, id) {
     if (f) return { room, f };
   }
   return null;
+}
+
+/**
+ * Scala kilka mebli w jeden (np. gdy skaner rozpoznał jeden mebel jako dwie bryły).
+ * Wynik: prostopadłościan obejmujący wszystkie bryły, w pokoju pierwszego mebla.
+ * Zwraca nowy mebel albo null.
+ */
+export function mergeFurniture(project, ids) {
+  const items = ids.map((id) => findFurniture(project, id)).filter(Boolean);
+  if (items.length < 2) return null;
+  const target = items[0].room;
+  const pts = [];
+  let y0 = Infinity, y1 = -Infinity;
+  for (const { room, f } of items) {
+    for (const p of furnitureOutline(f)) pts.push(worldToRoom(target, roomToWorld(room, p)));
+    y0 = Math.min(y0, f.y || 0);
+    y1 = Math.max(y1, (f.y || 0) + f.h);
+  }
+  const r = minAreaRect(pts);
+  // typ i nazwa po największej bryle
+  const main = items.reduce((a, b) => (a.f.w * a.f.d * a.f.h >= b.f.w * b.f.d * b.f.h ? a : b)).f;
+  const merged = createFurniture({
+    type: main.type,
+    name: main.name,
+    color: main.color,
+    x: r.x, z: r.z, y: y0 < 0.03 ? 0 : y0, rot: r.rot,
+    w: Math.max(0.02, r.w), d: Math.max(0.02, r.d), h: y1 - (y0 < 0.03 ? 0 : y0),
+    verified: items.some((it) => it.f.verified),
+    notes: items.map((it) => it.f.notes).filter(Boolean).join('\n'),
+    sourceLabel: items.map((it) => it.f.sourceLabel).filter(Boolean).join(' + ') || null,
+  });
+  merged.scanned = snapshotScanned(merged);
+  for (const { room, f } of items) room.furniture = room.furniture.filter((x) => x.id !== f.id);
+  target.furniture.push(merged);
+  return merged;
 }
 
 export function touch(project) {

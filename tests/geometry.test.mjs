@@ -147,3 +147,23 @@ test('projekt demo: konflikty tylko dla zamierzonych przypadków', () => {
     assert.equal(conf.size, 0, `${room.name}: ${JSON.stringify([...conf])}`);
   }
 });
+
+test('mergeFurniture: dwie bryły -> jeden mebel obejmujący obie', async () => {
+  const { mergeFurniture, findFurniture } = await import('../src/model.js');
+  const p = createProject();
+  const room = createRoom({ outline: [[0, 0], [5, 0], [5, 4], [0, 4]] });
+  const a = createFurniture({ type: 'couch', x: 1, z: 1, w: 1.0, d: 0.9, h: 0.8, verified: false, sourceLabel: 'couch' });
+  const b = createFurniture({ type: 'other', x: 2, z: 1, w: 1.0, d: 0.9, h: 0.45, y: 0, verified: false, sourceLabel: 'other' });
+  const c = createFurniture({ name: 'Zostaje', x: 4, z: 3 });
+  room.furniture.push(a, b, c);
+  p.rooms.push(room);
+  const m = mergeFurniture(p, [a.id, b.id]);
+  assert.ok(m);
+  assert.equal(room.furniture.length, 2);
+  assert.ok(!findFurniture(p, a.id) && !findFurniture(p, b.id));
+  near(m.w, 2.0, 1e-9); near(m.d, 0.9, 1e-9); near(m.h, 0.8, 1e-9);
+  near(m.x, 1.5, 1e-9); near(m.z, 1, 1e-9);
+  assert.equal(m.type, 'couch');
+  assert.equal(m.sourceLabel, 'couch + other');
+  assert.equal(mergeFurniture(p, [m.id]), null);
+});
