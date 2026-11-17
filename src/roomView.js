@@ -280,19 +280,30 @@ export class ApartmentView {
     obj.position.set(f.x, f.y || 0, f.z);
     obj.rotation.y = f.rot || 0;
     obj.userData = { kind: 'furniture', id: f.id, roomId: room.id };
-    const geo = furnitureGeometry(f);
+    // kształt złożony (scalone bryły) = kilka części, każda z własnym położeniem w układzie mebla
+    const parts = f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length ? f.parts : [{ ...f, x: 0, z: 0, y: 0, rot: 0 }];
     const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(f.color), roughness: 0.75, transparent: isMR, opacity: isMR ? 0.45 : 1 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.castShadow = !isMR;
-    mesh.receiveShadow = !isMR;
-    mesh.userData = { kind: 'furniture', id: f.id, roomId: room.id, ownMaterial: true };
-    obj.add(mesh);
-    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), new THREE.LineBasicMaterial({ color: 0x222222, transparent: true, opacity: isMR ? 0.9 : 0.5 }));
-    edges.userData = { ownMaterial: true, role: 'edges' };
-    obj.add(edges);
-    obj.userData.mesh = mesh;
-    obj.userData.edges = edges;
-    this.pickables.push(mesh);
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x222222, transparent: true, opacity: isMR ? 0.9 : 0.5 });
+    obj.userData.meshes = [];
+    obj.userData.edgeMat = edgeMat;
+    obj.userData.mat = mat;
+    parts.forEach((p, i) => {
+      const geo = furnitureGeometry(p);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(p.x || 0, p.y || 0, p.z || 0);
+      mesh.rotation.y = p.rot || 0;
+      mesh.castShadow = !isMR;
+      mesh.receiveShadow = !isMR;
+      mesh.userData = { kind: 'furniture', id: f.id, roomId: room.id, ownMaterial: i === 0 };
+      obj.add(mesh);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), edgeMat);
+      edges.position.copy(mesh.position);
+      edges.rotation.copy(mesh.rotation);
+      edges.userData = { ownMaterial: i === 0, role: 'edges' };
+      obj.add(edges);
+      obj.userData.meshes.push(mesh);
+      this.pickables.push(mesh);
+    });
     if (this.cssLabels && this.options.showLabels) {
       const lab = makeLabel((f.verified ? '' : '? ') + f.name);
       lab.position.set(0, f.h + 0.08, 0);
@@ -327,16 +338,15 @@ export class ApartmentView {
   applyHighlights() {
     const { selectedId, conflicts } = this.options;
     for (const [id, obj] of this.furnitureObjects) {
-      const mesh = obj.userData.mesh, edges = obj.userData.edges;
+      const mat = obj.userData.mat, edgeMat = obj.userData.edgeMat;
       const list = conflicts.get(id) || [];
       const hard = list.some((c) => c.kind !== 'door');
       const warn = !hard && list.length > 0;
-      mesh.material.emissive.setHex(hard ? COLOR_CONFLICT : warn ? COLOR_WARN : 0x000000);
-      mesh.material.emissiveIntensity = hard || warn ? 0.55 : 0;
+      mat.emissive.setHex(hard ? COLOR_CONFLICT : warn ? COLOR_WARN : 0x000000);
+      mat.emissiveIntensity = hard || warn ? 0.55 : 0;
       const sel = id === selectedId || !!(this.options.selectedIds && this.options.selectedIds.has(id));
-      edges.material.color.setHex(sel ? COLOR_SELECTED : hard ? COLOR_CONFLICT : 0x222222);
-      edges.material.opacity = sel ? 1 : this.mode === 'mr' ? 0.9 : 0.5;
-      edges.material.linewidth = sel ? 2 : 1;
+      edgeMat.color.setHex(sel ? COLOR_SELECTED : hard ? COLOR_CONFLICT : 0x222222);
+      edgeMat.opacity = sel ? 1 : this.mode === 'mr' ? 0.9 : 0.5;
       if (obj.userData.label) obj.userData.label.element.classList.toggle('conflict', hard);
       if (obj.userData.label) obj.userData.label.element.classList.toggle('selected', sel);
     }

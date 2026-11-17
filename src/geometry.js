@@ -225,6 +225,10 @@ function rectLocal(x0, z0, x1, z1) {
 
 /** Wielokąty wypukłe (lokalne) opisujące rzut mebla. inset > 0 zmniejsza je (tolerancja styku). */
 export function furnitureLocalParts(f, inset = 0) {
+  // kształt złożony (suma brył): części mają pozycję/obrót w układzie mebla
+  if (f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length) {
+    return f.parts.flatMap((p) => furnitureFootprints(p, inset));
+  }
   const hw = f.w / 2, hd = f.d / 2;
   const i = Math.min(inset, hw * 0.4, hd * 0.4);
   if (f.shape === 'cylinder') {
@@ -250,8 +254,32 @@ export function furnitureFootprints(f, inset = 0) {
   return furnitureLocalParts(f, inset).map((part) => part.map(([lx, lz]) => localToWorld(f, lx, lz)));
 }
 
+/** Wszystkie kontury mebla w świecie (dla kształtu złożonego — po jednym na część). */
+export function furnitureOutlines(f) {
+  if (f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length) {
+    return f.parts.flatMap((p) => furnitureOutlines(p)).map((poly) => poly.map(([lx, lz]) => localToWorld(f, lx, lz)));
+  }
+  return [furnitureOutline(f)];
+}
+
+/** Bryły mebla w świecie: [{ polys, y0, y1 }] — kształt złożony ma osobne wysokości części. */
+export function furnitureSolids(f, inset = 0) {
+  const fy = f.y || 0;
+  if (f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length) {
+    return f.parts.map((p) => ({
+      polys: furnitureFootprints(p, inset).map((poly) => poly.map(([lx, lz]) => localToWorld(f, lx, lz))),
+      y0: fy + (p.y || 0),
+      y1: fy + (p.y || 0) + p.h,
+    }));
+  }
+  return [{ polys: furnitureFootprints(f, inset), y0: fy, y1: fy + f.h }];
+}
+
 /** Obrys (kontur) mebla w świecie — dla L zwraca 6-kąt, dla reszty pierwszą część. */
 export function furnitureOutline(f) {
+  if (f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length) {
+    return convexHull(furnitureOutlines(f).flat());
+  }
   if (f.shape === 'L') {
     const hw = f.w / 2, hd = f.d / 2;
     const aw = Math.min(f.aw || hw, f.w), ad = Math.min(f.ad || hd, f.d);
@@ -409,7 +437,9 @@ export function computeConflicts(room, { tolerance = 0.005 } = {}) {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j];
       if (!yOverlap(a, b)) continue;
-      if (footprintsIntersect(fps.get(a.id), fps.get(b.id))) {
+      const sa = furnitureSolids(a, tolerance), sb = furnitureSolids(b, tolerance);
+      const hit = sa.some((x) => sb.some((y) => Math.min(x.y1, y.y1) - Math.max(x.y0, y.y0) > 0.01 && footprintsIntersect(x.polys, y.polys)));
+      if (hit) {
         push(a.id, { kind: 'furniture', otherId: b.id, label: b.name });
         push(b.id, { kind: 'furniture', otherId: a.id, label: a.name });
       }
@@ -429,8 +459,9 @@ export function computeClearances(room, f, maxDist = 6) {
   for (let k = 0; k < outline.length; k++) segs.push([outline[k], outline[(k + 1) % outline.length]]);
   for (const o of room.furniture) {
     if (o.id === f.id || o.hidden || !yOverlap(o, f)) continue;
-    const ol = furnitureOutline(o);
-    for (let k = 0; k < ol.length; k++) segs.push([ol[k], ol[(k + 1) % ol.length]]);
+    for (const ol of furnitureOutlines(o)) {
+      for (let k = 0; k < ol.length; k++) segs.push([ol[k], ol[(k + 1) % ol.length]]);
+    }
   }
   const out = [];
   const dirs = [

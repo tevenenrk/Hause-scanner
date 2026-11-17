@@ -11,7 +11,7 @@ import {
 } from './geometry.js';
 import {
   History, createFurniture, createOpening, createRoom, findFurniture, snapshotScanned, projectToJSON, projectFromJSON, uid,
-  mergeFurniture,
+  mergeFurniture, splitFurniture, resizeFurniture, ensureVariants, switchVariant, createVariant, deleteVariant, activeVariant,
 } from './model.js';
 import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from './labels.js';
 import { saveProject } from './store.js';
@@ -58,6 +58,7 @@ export class Editor {
       roomList: document.getElementById('room-list'),
       issues: document.getElementById('issues'),
       verify: document.getElementById('verify-card'),
+      variants: document.getElementById('variants'),
       saveStatus: document.getElementById('save-status'),
       projectName: document.getElementById('project-name'),
     };
@@ -183,9 +184,11 @@ export class Editor {
   }
 
   // ======================= cykl życia =======================
-  open(project, { xrSupported = false } = {}) {
+  open(project, { xrSupported = false, vrSupported = false } = {}) {
     this.project = project;
+    ensureVariants(project);
     this.xrSupported = xrSupported;
+    this.vrSupported = vrSupported;
     this.history = new History(project);
     this.selection = null;
     this.measure = [];
@@ -208,6 +211,9 @@ export class Editor {
   }
 
   updateXRButtons() {
+    const vr = document.getElementById('btn-vr');
+    vr.disabled = !this.vrSupported;
+    if (!this.vrSupported) vr.title = 'Dostępne w przeglądarce Meta Quest (WebXR VR). Na komputerze: ?emulate=office_small';
     for (const id of ['btn-scan', 'btn-mr']) {
       const b = document.getElementById(id);
       b.disabled = !this.xrSupported;
@@ -324,6 +330,29 @@ export class Editor {
     const s = this.selection;
     if (!s || s.kind !== 'furniture') return [];
     return [s.id, ...this.extra];
+  }
+
+  /** Tryb „wskaż drugą bryłę do scalenia” (karta rozpoznawania i panel mebla). */
+  startMergePick() {
+    const s = this.selection;
+    if (!s || s.kind !== 'furniture') return;
+    this.mergePick = s.id;
+    if (this.mode !== 'furniture') this.setMode('furniture');
+    this.el.hint.textContent = 'Scalanie: kliknij drugą bryłę (na widoku albo na liście), która należy do tego samego mebla. Esc anuluje.';
+    this.toast('Kliknij drugą bryłę do scalenia.');
+    this.renderVerify();
+  }
+
+  finishMergePick(otherId) {
+    const first = this.mergePick;
+    this.mergePick = null;
+    this.setMode('furniture');
+    const merged = mergeFurniture(this.project, [first, otherId]);
+    if (!merged) return;
+    this.extra.clear();
+    this.selection = { kind: 'furniture', id: merged.id };
+    this.commit();
+    this.toast(`Scalono w „${merged.name}” — kształt złożony z ${merged.parts.length} brył (Ctrl+Z cofa).`);
   }
 
   mergeSelected() {
@@ -505,6 +534,11 @@ export class Editor {
         const { id, roomId } = hit.object.userData;
         const room = this.room(roomId);
         const f = room.furniture.find((x) => x.id === id);
+        if (this.mergePick && this.mergePick !== id) {
+          this.finishMergePick(id);
+          this.stopControls(e);
+          return;
+        }
         if (e.shiftKey || e.ctrlKey || e.metaKey) {
           this.toggleExtra(id);
           this.stopControls(e);
@@ -891,6 +925,38 @@ export class Editor {
     $('file-import-editor').addEventListener('change', (e) => { if (e.target.files[0]) this.importRoomsFromFile(e.target.files[0]); e.target.value = ''; });
     $('btn-scan').addEventListener('click', () => this.onStartXR && this.onStartXR('scan', this));
     $('btn-mr').addEventListener('click', () => this.onStartXR && this.onStartXR('edit', this));
+    $('btn-vr').addEventListener('click', () => this.onStartXR && this.onStartXR('vr', this));
+    this.el.variants.addEventListener('change', (e) => {
+      if (e.target.id === 'variant-select') {
+        switchVariant(this.project, e.target.value);
+        this.selection = null; this.extra.clear();
+        this.commit();
+        this.toast(`Wersja: ${activeVariant(this.project).name}`);
+      }
+    });
+    this.el.variants.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-var]');
+      if (!b) return;
+      const act = b.dataset.var;
+      if (act === 'new') {
+        const name = prompt('Nazwa nowej wersji (kopia bieżącego układu):', `Wersja ${this.project.variants.length + 1}`);
+        if (name === null) return;
+        createVariant(this.project, name.trim() || undefined);
+        this.commit();
+        this.toast('Utworzono nową wersję. Przesuwaj meble — poprzednia wersja zostaje bez zmian.');
+      } else if (act === 'rename') {
+        const v = activeVariant(this.project);
+        const name = prompt('Nowa nazwa wersji:', v.name);
+        if (name && name.trim()) { v.name = name.trim(); this.commit(); }
+      } else if (act === 'del') {
+        const v = activeVariant(this.project);
+        if (this.project.variants.length <= 1) return this.toast('To jedyna wersja.');
+        if (!confirm(`Usunąć wersję „${v.name}”?`)) return;
+        deleteVariant(this.project, v.id);
+        this.selection = null;
+        this.commit();
+      }
+    });
     this.el.projectName.addEventListener('change', () => {
       this.project.name = this.el.projectName.value.trim() || 'Bez nazwy';
       this.commit();
@@ -959,7 +1025,10 @@ export class Editor {
     if (ctrl && (k === 'y' || k === 'Y')) { e.preventDefault(); this.redo(); return; }
     if (ctrl && (k === 'd' || k === 'D')) { e.preventDefault(); this.duplicateSelected(); return; }
     if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); this.deleteSelected(); return; }
-    if (k === 'Escape') { this.measure = []; this.select(null); return; }
+    if (k === 'Escape') {
+      if (this.mergePick) { this.mergePick = null; this.setMode('furniture'); return; }
+      this.measure = []; this.select(null); return;
+    }
     if (k === 'r' || k === 'R') { this.rotateSelected((e.shiftKey ? -1 : 1) * rad(15)); return; }
     if (k === 'h' || k === 'H') { const s = this.selected(); if (s && s.f) this.updateFurniture(s.f.id, { hidden: !s.f.hidden }); return; }
     if (k === 'v' || k === 'V') { this.setView(this.view === '3d' ? 'top' : '3d'); return; }
@@ -987,7 +1056,21 @@ export class Editor {
     this.renderProps();
   }
 
+  renderVariants() {
+    const vs = ensureVariants(this.project);
+    const opts = vs.map((v) => `<option value="${v.id}" ${v.id === this.project.activeVariantId ? 'selected' : ''}>${esc(v.name)}</option>`).join('');
+    this.el.variants.innerHTML = `
+      <h3>Wersja układu mebli</h3>
+      <select id="variant-select" aria-label="Wersja układu">${opts}</select>
+      <div class="btns">
+        <button data-var="new" title="Kopia bieżącego układu do przemeblowania">+ Nowa wersja</button>
+        <button data-var="rename">Zmień nazwę</button>
+        <button data-var="del" class="danger" ${vs.length <= 1 ? 'disabled' : ''}>Usuń</button>
+      </div>`;
+  }
+
   renderPanels() {
+    this.renderVariants();
     this.renderRoomList();
     this.renderIssues();
     this.renderVerify();
@@ -1031,6 +1114,7 @@ export class Editor {
     }
     const it = e.target.closest('[data-fid]');
     if (it) {
+      if (this.mergePick && this.mergePick !== it.dataset.fid) return this.finishMergePick(it.dataset.fid);
       if (this.mode !== 'furniture') this.setMode('furniture');
       if (e.shiftKey || e.ctrlKey || e.metaKey) this.toggleExtra(it.dataset.fid);
       else this.select({ kind: 'furniture', id: it.dataset.fid });
@@ -1083,6 +1167,7 @@ export class Editor {
       <div class="chips">${chips}</div>
       <div class="chips">
         <button data-vok>✓ Zgadza się</button>
+        <button data-vmerge title="Gdy skaner podzielił jeden mebel na kilka brył">${this.mergePick ? '… wskaż drugą bryłę' : '⧉ Scal z inną bryłą'}</button>
         <button data-vhide title="Zostaje w danych, ale znika z makiety">Tymczasowy — ukryj</button>
         <button class="danger" data-vdel>To nie mebel — usuń</button>
       </div>`;
@@ -1091,6 +1176,7 @@ export class Editor {
   onVerifyClick(e) {
     const b = e.target.closest('button');
     if (!b) return;
+    if (b.hasAttribute('data-vmerge')) { this.startMergePick(); return; }
     if (b.hasAttribute('data-vstart')) {
       const n = this.nextUnverified();
       if (n) { this.setMode('furniture'); this.select({ kind: 'furniture', id: n.f.id }); }
@@ -1146,7 +1232,9 @@ export class Editor {
       const clear = f.hidden ? [] : computeClearances(sel.room, f);
       const dirNames = { '+x': 'w prawo (oś szer.)', '-x': 'w lewo (oś szer.)', '+z': 'przód (oś gł.)', '-z': 'tył (oś gł.)' };
       const typeOpts = TYPE_KEYS.map((k) => `<option value="${k}" ${k === f.type ? 'selected' : ''}>${esc(FURNITURE_TYPES[k].name)}</option>`).join('');
-      const shapeOpts = [['box', 'Prostopadłościan'], ['L', 'Kształt L'], ['cylinder', 'Walec / owal']].map(([v, n]) => `<option value="${v}" ${v === f.shape ? 'selected' : ''}>${n}</option>`).join('');
+      const shapeList = [['box', 'Prostopadłościan'], ['L', 'Kształt L'], ['cylinder', 'Walec / owal']];
+      if (f.shape === 'compound') shapeList.unshift(['compound', `Złożony (${f.parts.length} bryły)`]);
+      const shapeOpts = shapeList.map(([v, n]) => `<option value="${v}" ${v === f.shape ? 'selected' : ''}>${n}</option>`).join('');
       const sc = f.scanned;
       html = `
         <h2>${esc(f.name)}</h2>
@@ -1183,8 +1271,10 @@ export class Editor {
         <div class="row"><span>Ukryty</span><label><input type="checkbox" data-k="hidden" ${f.hidden ? 'checked' : ''}> tymczasowy / poza makietą</label></div>
         <div class="row"><span>Potwierdzony</span><label><input type="checkbox" data-k="verified" ${f.verified ? 'checked' : ''}> typ sprawdzony</label></div>
         <div class="row"><span>Notatki</span><textarea data-k="notes">${esc(f.notes)}</textarea></div>
+        ${f.shape === 'compound' ? '<div class="note">Mebel złożony ze scalonych brył: przesuwa się i obraca jako całość, kolizje liczone są dla każdej bryły osobno.</div>' : ''}
         <div class="btns">
-          <button data-act="mergeHint" title="Shift/Ctrl + klik zaznacza kilka brył">⧉ Scal z…</button>
+          <button data-act="mergePick" title="Kliknij potem drugą bryłę (albo Shift/Ctrl + klik)">⧉ Scal z…</button>
+          ${f.shape === 'compound' ? '<button data-act="split">✂ Rozdziel bryły</button>' : ''}
           <button data-act="dup">⧉ Duplikuj</button>
           ${sc ? '<button data-act="resetScan" title="Przywróć pozycję i wymiary ze skanu">↺ Jak w skanie</button>' : ''}
           <button class="danger" data-act="del">🗑 Usuń</button>
@@ -1274,11 +1364,14 @@ export class Editor {
         case 'name': f.name = String(v).trim() || typeName(f.type); break;
         case 'type': { const def = !f.name || f.name === typeName(f.type); f.type = v; f.color = typeColor(v); if (def) f.name = typeName(v); f.verified = true; break; }
         case 'shape':
+          if (v === 'compound') break;
+          if (f.shape === 'compound') delete f.parts;
           f.shape = v;
           if (v === 'L') { f.aw = f.aw || Math.min(0.9, f.w / 2); f.ad = f.ad || Math.min(0.9, f.d / 2); }
           if (v === 'cylinder') { f.d = f.w; }
           break;
-        case 'w': case 'd': case 'h': case 'aw': case 'ad': { const n = m(v); if (n && n > 0) f[k] = n; break; }
+        case 'w': case 'd': case 'h': { const n = m(v); if (n && n > 0) resizeFurniture(f, k, n); break; }
+        case 'aw': case 'ad': { const n = m(v); if (n && n > 0) f[k] = n; break; }
         case 'x': case 'z': { const n = m(v); if (n !== null) f[k] = n; break; }
         case 'y': { const n = m(v); if (n !== null) f.y = Math.max(0, n); break; }
         case 'rotDeg': { const n = parseFloat(v); if (isFinite(n)) f.rot = normalizeAngle(rad(n)); break; }
@@ -1336,7 +1429,12 @@ export class Editor {
       }
       case 'dup': this.duplicateSelected(); break;
       case 'merge': this.mergeSelected(); break;
-      case 'mergeHint': this.toast('Przytrzymaj Shift lub Ctrl i kliknij drugą bryłę (na widoku albo na liście), potem „Scal w jeden mebel”.'); break;
+      case 'mergePick': this.startMergePick(); break;
+      case 'split': {
+        const parts = splitFurniture(this.project, sel.f.id);
+        if (parts.length) { this.selection = { kind: 'furniture', id: parts[0].id }; this.commit(); this.toast(`Rozdzielono na ${parts.length} bryły.`); }
+        break;
+      }
       case 'clearExtra': this.extra.clear(); this.refresh(); break;
       case 'resetScan': Object.assign(sel.f, sel.f.scanned); this.commit(); break;
       case 'del': this.deleteSelected(); break;

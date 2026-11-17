@@ -209,3 +209,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
   .sidebar { border: none !important; border-top: 1px solid var(--line) !important; }
   .tb-xr { margin-left: 0; }
 }
+
+.variants select { width: 100%; margin: 4px 0; }
+.variants .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.variants .btns button { font-size: 12px; padding: 3px 7px; }

@@ -11,11 +11,12 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - **pokazuje na żywo trójkąty skanu** (siatkę Space Setup), płaszczyzny i bryły mebli. Tam, gdzie nie ma trójkątów, pokój nie jest zeskanowany,
 - działa w trybie **bez granicy** (przestrzeń `unbounded` przeglądarki Questa), więc możesz chodzić po mieszkaniu. Gdy gogle go nie udostępnią, aplikacja wraca do zwykłego trybu z granicą,
 - zamienia skan na prosty model: obrys pokoju, wysokość, otwory i meble jako bryłki,
-- po zapisie **dopytuje**, co to za przedmiot („Co to jest? Stół / Kanapa / …”), i pozwala oznaczyć mebel jako tymczasowy albo usunąć go.
+- po zapisie **dopytuje**, co to za przedmiot („Co to jest? Stół / Kanapa / …”), i pozwala oznaczyć mebel jako tymczasowy albo usunąć go. Już na tym etapie możesz **scalić bryły** („Scal z inną bryłą”), jeśli skaner podzielił jeden mebel na kilka.
 
 **Edytor (PC lub przeglądarka Questa)**
 - przesuwanie mebli myszą (przyciąganie do ścian), obrót, zmiana wymiarów, kształty: prostopadłościan, L (narożnik) i walec,
-- **scalanie brył**: Shift/Ctrl + klik zaznacza kilka brył, a „Scal w jeden mebel” zamienia je w jedną (gdy skaner podzielił mebel na części),
+- **scalanie brył jako suma** (jak sumowanie boolowskie): scalone bryły tworzą jeden mebel o złożonym kształcie. Każda bryła zachowuje swój kształt i wysokość, całość przesuwa się i obraca razem, a kolizje liczone są dla każdej bryły osobno. „✂ Rozdziel bryły” cofa scalenie. Scalasz przez „⧉ Scal z…” albo Shift/Ctrl + klik,
+- **wersje układu**: alternatywne przemeblowania tego samego mieszkania („+ Nowa wersja” kopiuje bieżący układ). Przełączasz je listą po lewej albo w goglach,
 - **🏠 Makieta**: widok całego mieszkania z pełnymi ścianami, który sam się obraca (myszą obracasz i przybliżasz),
 - **kolizje**: czerwony = mebel nachodzi na inny mebel lub wystaje za ścianę, pomarańczowy = stoi w strefie otwierania drzwi,
 - **wolne miejsce wokół** zaznaczonego mebla (ile cm do ściany lub do najbliższego mebla),
@@ -29,7 +30,13 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - chwytanie mebli promieniem kontrolera albo szczypnięciem, obrót gałką,
 - panel 3D: obrót, wymiary ±1/±5 cm, dosuwanie do ściany, typ, **scalanie** („Scal z…”, potem wskazujesz drugą bryłę), duplikowanie, ukrywanie, usuwanie, cofanie, dodawanie mebli,
 - **🏠 Makieta w goglach**: miniatura mieszkania przed Tobą. Gałka obraca (lewo/prawo) i skaluje (góra/dół), spust na podłodze makiety ją przesuwa, a meble chwytasz i przesuwasz także w miniaturze,
-- trójkąty skanu na żywo (można wyłączyć).
+- trójkąty skanu na żywo (można wyłączyć),
+- **pełne parametry w goglach** („Więcej…”): kształt, wysokość nad podłogą, przesuwanie o 1 cm, kolor, „Jak w skanie”, potwierdzenie, rozdzielanie brył, wolne miejsce wokół (linie z odległościami), lista ukrytych mebli, wersje układu.
+
+**Gotowy model w VR (bez bycia w mieszkaniu)**
+- przycisk **🥽 Makieta VR** otwiera pełny VR z gotowym modelem: najpierw makieta przed Tobą,
+- **🚶 Spacer 1:1**: wybierasz pokój i chodzisz po wirtualnym mieszkaniu (lewa gałka: chodzenie, prawa: obrót o 30°),
+- przemeblowanie działa wszędzie tak samo: w makiecie, na spacerze w VR i w MR w prawdziwym mieszkaniu. Zmiany trafiają do aktywnej wersji układu.
 
 ## Jak uruchomić
 

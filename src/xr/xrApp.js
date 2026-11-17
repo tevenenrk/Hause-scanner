@@ -10,7 +10,11 @@ import {
   computeConflicts, snapToWalls, normalizeAngle, rad, polygonCentroid, alignRotationToNearestWall, worldToRoom, roomToWorld,
   polygonArea, roomContainsWorldPoint,
 } from '../geometry.js';
-import { History, createFurniture, findFurniture, uid, mergeFurniture } from '../model.js';
+import {
+  History, createFurniture, findFurniture, uid, mergeFurniture, splitFurniture, resizeFurniture,
+  ensureVariants, activeVariant, switchVariant, createVariant, deleteVariant,
+} from '../model.js';
+import { computeClearances } from '../geometry.js';
 import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from '../labels.js';
 
 // 'unbounded' = chodzenie po całym mieszkaniu bez granicy Guardian (przeglądarka Questa obsługuje ją
@@ -22,6 +26,16 @@ function sessionInit(preferUnbounded) {
     optionalFeatures: [...(preferUnbounded ? ['unbounded'] : []), 'local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors', 'hit-test'],
   };
 }
+
+export async function isVRSupported() {
+  try {
+    return !!(navigator.xr && (await navigator.xr.isSessionSupported('immersive-vr')));
+  } catch (e) {
+    return false;
+  }
+}
+
+const PALETTE = ['#c8915a', '#8d6e52', '#f2efe9', '#3a3f47', '#6c8ebf', '#9b7fc4', '#5fa35f', '#d9534f', '#e8c547', '#9aa0a6', '#b9a28a', '#2f6fde'];
 
 export async function isARSupported() {
   try {
@@ -65,7 +79,11 @@ export class XRApp {
     this.onExit = o.onExit;
     this.onSave = o.onSave;
     this.history = new History(this.project);
+    this.isVR = o.mode === 'vr';
     this.state = o.mode === 'scan' ? 'scan' : 'edit';
+    this.walkRoot = null;
+    this.mergeReturn = null;
+    this.turnCooldown = 0;
     this.selectedId = null;
     this.activeDim = 'w';
     this.grab = null;
@@ -84,7 +102,9 @@ export class XRApp {
   // ======================= start / koniec =======================
   /** Musi być wywołane bezpośrednio w obsłudze kliknięcia (gest użytkownika). */
   start() {
-    const sessionPromise = navigator.xr.requestSession('immersive-ar', sessionInit(this.preferUnbounded));
+    const sessionPromise = this.isVR
+      ? navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] })
+      : navigator.xr.requestSession('immersive-ar', sessionInit(this.preferUnbounded));
     return sessionPromise.then((session) => this.onSessionStarted(session));
   }
 
@@ -96,7 +116,7 @@ export class XRApp {
     renderer.xr.enabled = true;
     // wybór przestrzeni odniesienia: unbounded -> local-floor -> local
     const enabled = session.enabledFeatures ? [...session.enabledFeatures] : null;
-    const candidates = this.preferUnbounded ? ['unbounded', 'local-floor', 'local'] : ['local-floor', 'local'];
+    const candidates = this.isVR ? ['local-floor', 'local'] : this.preferUnbounded ? ['unbounded', 'local-floor', 'local'] : ['local-floor', 'local'];
     this.refType = 'local';
     for (const t of candidates) {
       if (enabled && t !== 'local' && !enabled.includes(t)) continue;
@@ -114,7 +134,18 @@ export class XRApp {
     const dl = new THREE.DirectionalLight(0xffffff, 1.2);
     dl.position.set(1, 3, 2);
     scene.add(dl);
-    this.camera = new THREE.PerspectiveCamera(70, 1, 0.02, 50);
+    this.camera = new THREE.PerspectiveCamera(70, 1, 0.02, 200);
+    if (this.isVR) {
+      // pełny VR: tło, podłoże i siatka zamiast obrazu z kamer
+      scene.background = new THREE.Color(0xcfdbe6);
+      const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 48), new THREE.MeshStandardMaterial({ color: 0xb7c2cc, roughness: 1 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.01;
+      scene.add(ground);
+      const grid = new THREE.GridHelper(60, 60, 0x8f9aa5, 0xa5afb9);
+      grid.position.y = -0.005;
+      scene.add(grid);
+    }
 
     this.live = new LiveSceneOverlay();
     scene.add(this.live.group);
@@ -140,6 +171,13 @@ export class XRApp {
     session.addEventListener('end', () => this.onSessionEnded());
     this.lastTime = performance.now();
     renderer.setAnimationLoop((t, frame) => this.onFrame(t, frame));
+    if (this.isVR) {
+      // gotowy model: start od makiety
+      this.aligned = true;
+      this.anchorRoomId = this.preferredRoomId || (this.project.rooms[0] && this.project.rooms[0].id);
+      this.needDollPlace = true;
+      this.enterDollhouse();
+    }
     this.updatePanel();
   }
 
@@ -245,6 +283,12 @@ export class XRApp {
     }
     const pose = frame.getViewerPose(this.refSpace);
     if (pose) this.head = new THREE.Matrix4().fromArray(pose.transform.matrix);
+    if (this.needDollPlace && this.head) {
+      this.needDollPlace = false;
+      this.placeDollInFront();
+      this.applyDollMatrix();
+      this.placePanel(true);
+    }
     if (!this.panelPlaced && this.head) this.placePanel(false);
     else if (this.head && this.frameCount % 30 === 0) this.keepPanelInView();
 
@@ -254,7 +298,7 @@ export class XRApp {
     }
     if (this.state === 'scan') this.updateScan(frame, now);
     if (!this.aligned && this.state !== 'scan') this.tryAlign(frame);
-    const liveOn = this.state === 'scan' || (this.showMesh && !this.dollhouse);
+    const liveOn = !this.isVR && (this.state === 'scan' || (this.showMesh && !this.dollhouse));
     this.live.visible = liveOn;
     if (liveOn) this.live.update(frame, this.refSpace);
     if (this.state === 'scan' && this.frameCount % 45 === 0) this.updatePanel();
@@ -342,14 +386,38 @@ export class XRApp {
       dollRot: () => { this.doll.yaw += rad(parseFloat(arg)); this.applyDollMatrix(); this.refresh(); },
       dollScale: () => { this.doll.scale = Math.min(0.5, Math.max(0.01, this.doll.scale * parseFloat(arg))); this.applyDollMatrix(); this.refresh(); },
       dollHere: () => { this.placeDollInFront(); this.applyDollMatrix(); this.refresh(); },
-      mergeStart: () => { this.state = 'merge'; this.updatePanel(); },
+      mergeStart: () => { this.mergeReturn = this.state === 'verify' ? 'verify' : null; this.state = 'merge'; this.updatePanel(); },
+      more: () => { this.state = 'more'; this.updatePanel(); },
+      colors: () => { this.state = 'colors'; this.updatePanel(); },
+      setColor: () => { const s = this.sel(); if (s) { s.f.color = arg === 'type' ? typeColor(s.f.type) : arg; this.state = 'more'; this.commit(); } },
+      shape: () => this.cycleShape(),
+      split: () => { const parts = splitFurniture(this.project, this.selectedId); if (parts.length) { this.selectedId = parts[0].id; this.state = 'edit'; this.commit(); } },
+      elev: () => { const s = this.sel(); if (s) { s.f.y = Math.max(0, (s.f.y || 0) + parseFloat(arg) / 100); this.commit(); } },
+      nudge: () => this.nudgeSelected(arg),
+      resetScan: () => { const s = this.sel(); if (s && s.f.scanned) { Object.assign(s.f, s.f.scanned); this.commit(); } },
+      verified: () => { const s = this.sel(); if (s) { s.f.verified = !s.f.verified; this.commit(); } },
+      variants: () => { this.state = 'variants'; this.updatePanel(); },
+      varSwitch: () => { switchVariant(this.project, arg); this.selectedId = null; this.state = 'edit'; this.commit(); },
+      varNew: () => { createVariant(this.project); this.selectedId = null; this.state = 'edit'; this.commit(); },
+      varDel: () => { deleteVariant(this.project, this.project.activeVariantId); this.selectedId = null; this.state = 'variants'; this.commit(); },
+      hidden: () => { this.state = 'hidden'; this.updatePanel(); },
+      unhide: () => { const s = findFurniture(this.project, arg); if (s) { s.f.hidden = false; this.selectedId = s.f.id; this.state = 'edit'; this.commit(); } },
+      verifyAll: () => this.nextVerify(),
+      rooms: () => { this.state = 'rooms'; this.updatePanel(); },
+      goRoom: () => { this.state = 'edit'; if (this.dollhouse) this.dollhouse = false; this.enterWalk(arg); },
       add: () => { this.state = 'add'; this.updatePanel(); },
       addTpl: () => this.addTemplate(TEMPLATES[+arg]),
       align: () => { this.state = 'align'; this.selectedId = null; this.refresh(); },
       alignMove: () => this.alignMove(arg),
       alignRot: () => this.alignRotate(rad(parseFloat(arg))),
       alignReset: () => { const r = this.anchorRoom(); if (r) { r.xrAlign = { x: 0, z: 0, rot: 0 }; this.aligned = false; this.commit(); } },
-      back: () => { this.state = 'edit'; this.refresh(); },
+      back: () => {
+        if (this.state === 'merge' && this.mergeReturn === 'verify') this.state = 'verify';
+        else if (this.state === 'colors') this.state = 'more';
+        else this.state = 'edit';
+        this.mergeReturn = null;
+        this.refresh();
+      },
       deselect: () => { this.selectedId = null; this.state = 'edit'; this.refresh(); },
       rot: () => this.rotateSelected(rad(parseFloat(arg))),
       dim: () => { this.activeDim = arg; this.updatePanel(); },
@@ -398,6 +466,7 @@ export class XRApp {
       const rows = [[{ id: 'vok', label: `✓ Tak, to ${typeName(f.type)}`, style: 'primary' }]];
       const keys = TYPE_KEYS.filter((k) => k !== f.type);
       for (let i = 0; i < keys.length; i += 4) rows.push(keys.slice(i, i + 4).map((k) => ({ id: `vtype:${k}`, label: FURNITURE_TYPES[k].name.split(' /')[0] })));
+      rows.push([{ id: 'mergeStart', label: '⧉ Scal z inną bryłą (to jeden mebel)' }]);
       rows.push([{ id: 'vhide', label: 'Tymczasowy (ukryj)' }, { id: 'vdel', label: 'To nie mebel', style: 'danger' }, { id: 'vskip', label: 'Pomiń resztę', style: 'muted' }]);
       return {
         title: `Co to jest? (zostało ${left})`,
@@ -430,9 +499,56 @@ export class XRApp {
     if (st === 'merge' && found) {
       return {
         title: `Scal: ${found.f.name}`,
-        lines: ['Wskaż spustem drugą bryłę, która jest częścią tego samego mebla. Powstanie jedna bryła obejmująca obie.'],
+        lines: ['Wskaż spustem drugą bryłę, która jest częścią tego samego mebla. Obie bryły połączą się w jeden mebel o złożonym kształcie (suma brył) i będą się przesuwać razem.'],
         rows: [[{ id: 'back', label: 'Anuluj', style: 'muted' }]],
       };
+    }
+    if (st === 'more' && found) {
+      const f = found.f;
+      const clear = computeClearances(found.room, f).map((c) => `${{ '+x': 'prawo', '-x': 'lewo', '+z': 'przód', '-z': 'tył' }[c.dir]} ${cmTxt(c.dist)}`).join(', ');
+      const shapeNames = { box: 'prostopadłościan', L: 'kształt L', cylinder: 'walec', compound: `złożony (${(f.parts || []).length} bryły)` };
+      return {
+        title: `${f.name}: szczegóły`,
+        lines: [
+          `Kształt: ${shapeNames[f.shape] || f.shape}. Nad podłogą: ${cmTxt(f.y || 0)} cm. Potwierdzony: ${f.verified ? 'tak' : 'nie'}.`,
+          clear ? `Wolne miejsce: ${clear} cm.` : '',
+        ].filter(Boolean),
+        rows: [
+          f.shape === 'compound'
+            ? [{ id: 'split', label: '✂ Rozdziel bryły' }, { id: 'colors', label: 'Kolor…' }]
+            : [{ id: 'shape', label: 'Zmień kształt ▸' }, { id: 'colors', label: 'Kolor…' }],
+          [{ id: 'elev:-5', label: 'Niżej 5' }, { id: 'elev:-1', label: 'Niżej 1' }, { id: 'elev:1', label: 'Wyżej 1' }, { id: 'elev:5', label: 'Wyżej 5' }],
+          [{ id: 'nudge:left', label: '← 1 cm' }, { id: 'nudge:fwd', label: '↑ 1 cm' }, { id: 'nudge:back', label: '↓ 1 cm' }, { id: 'nudge:right', label: '→ 1 cm' }],
+          [{ id: 'resetScan', label: '↺ Jak w skanie', disabled: !f.scanned }, { id: 'verified', label: f.verified ? 'Potwierdzony ✓' : 'Oznacz potwierdzony' }],
+          [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'back', label: '← Wróć', style: 'primary' }],
+        ],
+      };
+    }
+    if (st === 'colors' && found) {
+      const rows = [];
+      for (let i = 0; i < PALETTE.length; i += 4) rows.push(PALETTE.slice(i, i + 4).map((c) => ({ id: `setColor:${c}`, label: c === found.f.color ? `● ${c}` : c, style: c === found.f.color ? 'active' : undefined })));
+      rows.push([{ id: 'setColor:type', label: 'Kolor typu' }, { id: 'back', label: '← Wróć', style: 'muted' }]);
+      return { title: 'Kolor mebla', lines: [], rows };
+    }
+    if (st === 'variants') {
+      const vs = ensureVariants(this.project);
+      const rows = vs.map((v) => [{ id: `varSwitch:${v.id}`, label: (v.id === this.project.activeVariantId ? '● ' : '') + v.name, style: v.id === this.project.activeVariantId ? 'active' : undefined }]);
+      rows.push([{ id: 'varNew', label: '+ Nowa wersja (kopia)', style: 'primary' }, { id: 'varDel', label: 'Usuń bieżącą', style: 'danger', disabled: vs.length <= 1 }]);
+      rows.push([{ id: 'back', label: '← Wróć', style: 'muted' }]);
+      return { title: 'Wersje układu', lines: ['Każda wersja to osobne ustawienie mebli w tym samym mieszkaniu. Nowa wersja = kopia bieżącej, potem ją przemeblowujesz.'], rows };
+    }
+    if (st === 'hidden') {
+      const hidden = [];
+      for (const r of this.project.rooms) for (const f of r.furniture) if (f.hidden) hidden.push(f);
+      const rows = [];
+      for (let i = 0; i < hidden.length; i += 2) rows.push(hidden.slice(i, i + 2).map((f) => ({ id: `unhide:${f.id}`, label: `Pokaż: ${f.name}` })));
+      rows.push([{ id: 'back', label: '← Wróć', style: 'muted' }]);
+      return { title: `Ukryte meble (${hidden.length})`, lines: hidden.length ? [] : ['Brak ukrytych mebli.'], rows };
+    }
+    if (st === 'rooms') {
+      const rows = this.project.rooms.map((r) => [{ id: `goRoom:${r.id}`, label: `${r.name} (${Math.abs(polygonArea(r.outline)).toFixed(1)} m²)` }]);
+      rows.push([{ id: 'back', label: '← Wróć', style: 'muted' }]);
+      return { title: 'Przejdź do pokoju', lines: [], rows };
     }
     if (st === 'type' && found) {
       const rows = [];
@@ -454,11 +570,19 @@ export class XRApp {
           [{ id: 'dimAdd:-5', label: '−5 cm' }, { id: 'dimAdd:-1', label: '−1 cm' }, { id: 'dimAdd:1', label: '+1 cm' }, { id: 'dimAdd:5', label: '+5 cm' }],
           [{ id: 'snap', label: 'Dosuń do ściany' }, { id: 'alignWall', label: 'Równolegle do ściany' }],
           [{ id: 'type', label: 'Zmień typ' }, { id: 'mergeStart', label: 'Scal z…' }, { id: 'dup', label: 'Duplikuj' }],
+          [{ id: 'more', label: 'Więcej… (kształt, wysokość, kolor)' }],
           [{ id: 'hide', label: 'Ukryj' }, { id: 'del', label: 'Usuń', style: 'danger' }],
           [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'deselect', label: 'Gotowe', style: 'primary' }],
         ],
       };
     }
+    const hiddenCount = this.project.rooms.reduce((n, r) => n + r.furniture.filter((f) => f.hidden).length, 0);
+    const unverCount = this.unverified().length;
+    const variantRow = [
+      { id: 'variants', label: `Wersja: ${activeVariant(this.project).name}` },
+      { id: 'hidden', label: `Ukryte (${hiddenCount})`, disabled: !hiddenCount },
+    ];
+    if (unverCount) variantRow.push({ id: 'verifyAll', label: `Do potwierdzenia (${unverCount})` });
     if (this.dollhouse) {
       return {
         title: 'Makieta mieszkania',
@@ -470,7 +594,23 @@ export class XRApp {
           [{ id: 'dollRot:45', label: '⟲ 45°' }, { id: 'dollRot:-45', label: '⟳ 45°' }, { id: 'dollScale:0.8', label: '− Mniejsza' }, { id: 'dollScale:1.25', label: '+ Większa' }],
           [{ id: 'dollHere', label: 'Przed siebie' }, { id: 'add', label: '+ Dodaj mebel' }],
           [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
-          [{ id: 'dollExit', label: 'Wróć do 1:1 w pokoju', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }],
+          variantRow,
+          this.isVR
+            ? [{ id: 'rooms', label: '🚶 Spacer 1:1 (wybierz pokój)', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }]
+            : [{ id: 'dollExit', label: 'Wróć do 1:1 w pokoju', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }],
+        ],
+      };
+    }
+    // spacer po gotowym modelu w VR
+    if (this.isVR) {
+      return {
+        title: 'Spacer po mieszkaniu (VR)',
+        lines: ['Lewa gałka: chodzenie, prawa gałka: obrót o 30°. Spust na meblu: przesuwanie, gałka obraca chwycony mebel. Grip przywołuje panel.'],
+        rows: [
+          [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
+          [{ id: 'add', label: '+ Dodaj mebel' }, { id: 'rooms', label: 'Przejdź do pokoju' }],
+          variantRow,
+          [{ id: 'doll', label: '🏠 Makieta' }, { id: 'exit', label: 'Zapisz i wyjdź', style: 'primary' }],
         ],
       };
     }
@@ -486,6 +626,7 @@ export class XRApp {
         [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
         [{ id: 'add', label: '+ Dodaj mebel' }, { id: 'align', label: 'Wyrównaj model' }],
         [{ id: 'mesh', label: this.showMesh ? 'Trójkąty skanu: wł.' : 'Trójkąty skanu: wył.', style: this.showMesh ? 'active' : undefined }, { id: 'doll', label: '🏠 Makieta' }],
+        variantRow,
         [{ id: 'exit', label: 'Zapisz i wyjdź', style: 'primary' }],
       ],
     };
@@ -648,6 +789,7 @@ export class XRApp {
   /** root = F(podłoga) ∘ A(korekta) ∘ T(pokój)^-1 */
   applyAlignment() {
     if (this.dollhouse) { this.applyDollMatrix(); return; }
+    if (this.isVR) { if (this.walkRoot) this.setRootMatrix(this.walkRoot); return; }
     const r = this.anchorRoom();
     if (!r || !this.anchorFrame) return;
     const a = r.xrAlign || { x: 0, z: 0, rot: 0 };
@@ -702,7 +844,55 @@ export class XRApp {
     this.refresh();
   }
 
+  /** VR: spacer 1:1 — środek wybranego pokoju pod użytkownikiem. */
+  enterWalk(roomId) {
+    const room = this.project.rooms.find((r) => r.id === roomId) || this.anchorRoom() || this.project.rooms[0];
+    if (!room) return;
+    this.anchorRoomId = room.id;
+    this.dollhouse = false;
+    this.dollDrag = null;
+    this.view.mode = 'editor';
+    this.view.setOptions({ wallMode: 'full', showZones: true, showGhosts: false, showLabels: false, mode: 'furniture' });
+    const c = roomToWorld(room, polygonCentroid(room.outline));
+    const head = this.head ? new THREE.Vector3().setFromMatrixPosition(this.head) : new THREE.Vector3();
+    this.walkRoot = new THREE.Matrix4().makeTranslation(head.x - c[0], 0, head.z - c[1]);
+    this.applyAlignment();
+    this.placePanel(true);
+    this.refresh();
+  }
+
+  /** Chodzenie gałką (lewa) i obrót skokowy (prawa) w VR. */
+  updateLocomotion(dt) {
+    if (!this.isVR || this.dollhouse || !this.walkRoot || !this.head) return;
+    this.turnCooldown = Math.max(0, this.turnCooldown - dt);
+    const headPos = new THREE.Vector3().setFromMatrixPosition(this.head);
+    const fwd = new THREE.Vector3(0, 0, -1).transformDirection(this.head).setY(0).normalize();
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    let changed = false;
+    for (const c of this.controllers) {
+      const src = c.userData.inputSource;
+      if (!src || !src.gamepad || (this.grab && this.grab.c === c)) continue;
+      const sx = this.stickX(c), sy = this.stickY(c);
+      if (src.handedness === 'left' && (sx || sy)) {
+        const v = fwd.clone().multiplyScalar(-sy).addScaledVector(right, sx).multiplyScalar(1.4 * dt);
+        // użytkownik idzie do przodu = świat przesuwa się do tyłu
+        this.walkRoot.premultiply(new THREE.Matrix4().makeTranslation(-v.x, 0, -v.z));
+        changed = true;
+      } else if (src.handedness === 'right' && sx && this.turnCooldown === 0) {
+        const ang = sx > 0 ? rad(30) : -rad(30);
+        const m = new THREE.Matrix4().makeTranslation(headPos.x, 0, headPos.z)
+          .multiply(new THREE.Matrix4().makeRotationY(ang))
+          .multiply(new THREE.Matrix4().makeTranslation(-headPos.x, 0, -headPos.z));
+        this.walkRoot.premultiply(m);
+        this.turnCooldown = 0.35;
+        changed = true;
+      }
+    }
+    if (changed) this.applyAlignment();
+  }
+
   exitDollhouse() {
+    if (this.isVR) { this.enterWalk(this.anchorRoomId); return; }
     this.dollhouse = false;
     this.dollDrag = null;
     this.view.mode = 'mr';
@@ -775,7 +965,8 @@ export class XRApp {
       if (fh && fh.object.userData.id !== this.selectedId) {
         const merged = mergeFurniture(this.project, [this.selectedId, fh.object.userData.id]);
         if (merged) this.selectedId = merged.id;
-        this.state = 'edit';
+        this.state = this.mergeReturn === 'verify' && merged && !merged.verified ? 'verify' : 'edit';
+        this.mergeReturn = null;
         this.haptic(c, 0.6, 40);
         this.commit();
       }
@@ -866,6 +1057,7 @@ export class XRApp {
 
   updateGrab(dt) {
     if (this.dollhouse) this.updateDollhouse(dt);
+    else this.updateLocomotion(dt);
     if (this.alignDrag) {
       const c = this.alignDrag.c;
       const fp = this.rayFloor(c);
@@ -952,8 +1144,7 @@ export class XRApp {
     const s = this.sel();
     if (!s) return;
     const k = this.activeDim;
-    s.f[k] = Math.max(0.02, s.f[k] + delta);
-    if (s.f.shape === 'cylinder' && k === 'w') s.f.d = s.f.w;
+    resizeFurniture(s.f, k, s.f[k] + delta);
     this.commit();
   }
 
@@ -995,6 +1186,34 @@ export class XRApp {
     const copy = { ...structuredClone(s.f), id: uid('f'), name: s.f.name + ' (kopia)', x: s.f.x + 0.3, z: s.f.z + 0.3, scanned: null };
     s.room.furniture.push(copy);
     this.selectedId = copy.id;
+    this.commit();
+  }
+
+  cycleShape() {
+    const s = this.sel();
+    if (!s || s.f.shape === 'compound') return;
+    const order = ['box', 'L', 'cylinder'];
+    const f = s.f;
+    f.shape = order[(order.indexOf(f.shape) + 1) % order.length];
+    if (f.shape === 'L') { f.aw = f.aw || Math.min(0.9, f.w / 2); f.ad = f.ad || Math.min(0.9, f.d / 2); }
+    this.commit();
+  }
+
+  /** Przesunięcie o 1 cm w kierunku względem użytkownika. */
+  nudgeSelected(dir) {
+    const s = this.sel();
+    if (!s || !this.head) return;
+    const fwd = new THREE.Vector3(0, 0, -1).transformDirection(this.head).setY(0).normalize();
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    const w = { fwd, back: fwd.clone().negate(), left: right.clone().negate(), right }[dir];
+    if (!w) return;
+    // kierunek świata -> układ mieszkania (bez skali makiety) -> układ pokoju
+    const rot = new THREE.Matrix4().extractRotation(this.root.matrix).invert();
+    const a = w.clone().applyMatrix4(rot).setY(0).normalize();
+    const t = s.room.transform.rot || 0;
+    const c = Math.cos(-t), sn = Math.sin(-t);
+    s.f.x += (a.x * c + a.z * sn) * 0.01;
+    s.f.z += (-a.x * sn + a.z * c) * 0.01;
     this.commit();
   }
 
@@ -1112,8 +1331,9 @@ export class XRApp {
 
   updateSelectionLabel() {
     for (const ch of [...this.labels.children]) {
-      ch.material.map.dispose();
+      if (ch.material.map) ch.material.map.dispose();
       ch.material.dispose();
+      if (ch.geometry && ch.userData.isClearance) ch.geometry.dispose();
       this.labels.remove(ch);
     }
     // etykiety są w układzie mieszkania — w makiecie kompensujemy skalę, żeby były czytelne
@@ -1127,6 +1347,26 @@ export class XRApp {
     };
     const s = this.sel();
     if (s) addLabel(s.f, s.room, `${s.f.name}  ${cmTxt(s.f.w)}×${cmTxt(s.f.d)}×${cmTxt(s.f.h)}`, '#111111', 'rgba(255,212,0,0.95)');
+    // wolne miejsce wokół zaznaczonego mebla (linie + odległości), jak na PC
+    if (s && !s.f.hidden) {
+      const y = (s.f.y || 0) + Math.min(s.f.h, 0.3);
+      for (const c of computeClearances(s.room, s.f)) {
+        const a = roomToWorld(s.room, c.from), b = roomToWorld(s.room, c.to);
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a[0], y, a[1]), new THREE.Vector3(b[0], y, b[1])]),
+          new THREE.LineBasicMaterial({ color: c.dist < 0.05 ? 0xff4040 : 0x30d070, depthTest: false }),
+        );
+        line.renderOrder = 25;
+        line.userData.isClearance = true;
+        this.labels.add(line);
+        if (c.dist > 0.01) {
+          const t = makeTextSprite(`${cmTxt(c.dist)} cm`, { color: '#ffffff', bg: c.dist < 0.6 ? 'rgba(200,40,40,0.9)' : 'rgba(20,120,60,0.9)', height: 0.045 });
+          t.scale.multiplyScalar(k);
+          t.position.set((a[0] + b[0]) / 2, y + 0.02 * k, (a[1] + b[1]) / 2);
+          this.labels.add(t);
+        }
+      }
+    }
     if (this.state === 'verify' || this.state === 'edit') {
       for (const r of this.project.rooms) for (const f of r.furniture) {
         if (!f.verified && !f.hidden && f.id !== this.selectedId) addLabel(f, r, '?', '#ffffff', 'rgba(47,111,222,0.9)');

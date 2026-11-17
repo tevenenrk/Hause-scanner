@@ -1,6 +1,6 @@
 // Model danych: projekt (mieszkanie) -> pomieszczenia -> meble / otwory.
 import { FURNITURE_TYPES, typeName, typeColor } from './labels.js';
-import { ensurePositive, polygonArea, furnitureOutline, minAreaRect, roomToWorld, worldToRoom } from './geometry.js';
+import { ensurePositive, polygonArea, furnitureOutlines, minAreaRect, roomToWorld, worldToRoom, localToWorld, worldToLocal, normalizeAngle } from './geometry.js';
 
 export const MODEL_VERSION = 1;
 
@@ -55,6 +55,10 @@ export function createFurniture(props = {}) {
     f.aw = props.aw ?? Math.min(0.9, f.w / 2);
     f.ad = props.ad ?? Math.min(0.9, f.d / 2);
   }
+  if (f.shape === 'compound') {
+    f.parts = (props.parts || []).map((p) => ({ ...p }));
+    if (!f.parts.length) f.shape = 'box';
+  }
   return f;
 }
 
@@ -85,31 +89,56 @@ export function findFurniture(project, id) {
   return null;
 }
 
+/** Części mebla w układzie pokoju (proste bryły: box / L / cylinder). */
+function partsInRoom(f) {
+  if (f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length) {
+    return f.parts.map((p) => {
+      const [x, z] = localToWorld(f, p.x, p.z);
+      return { ...p, x, z, rot: normalizeAngle((p.rot || 0) + (f.rot || 0)), y: (f.y || 0) + (p.y || 0) };
+    });
+  }
+  const { shape, w, d, h, aw, ad, x, z, rot } = f;
+  return [{ shape: shape || 'box', w, d, h, aw, ad, x, z, rot: rot || 0, y: f.y || 0 }];
+}
+
+/** Przelicza część z układu pokoju `from` do układu pokoju `to`. */
+function partToRoom(p, from, to) {
+  if (from === to) return { ...p };
+  const [x, z] = worldToRoom(to, roomToWorld(from, [p.x, p.z]));
+  return { ...p, x, z, rot: normalizeAngle(p.rot + (from.transform.rot || 0) - (to.transform.rot || 0)) };
+}
+
 /**
- * Scala kilka mebli w jeden (np. gdy skaner rozpoznał jeden mebel jako dwie bryły).
- * Wynik: prostopadłościan obejmujący wszystkie bryły, w pokoju pierwszego mebla.
- * Zwraca nowy mebel albo null.
+ * Scala kilka mebli w jeden obiekt o kształcie złożonym (suma brył, jak sumowanie boolowskie):
+ * każda bryła zachowuje swój kształt, położenie i wysokość, a całość przesuwa się i obraca razem.
+ * Wynik trafia do pokoju pierwszego mebla. Zwraca nowy mebel albo null.
  */
 export function mergeFurniture(project, ids) {
   const items = ids.map((id) => findFurniture(project, id)).filter(Boolean);
   if (items.length < 2) return null;
   const target = items[0].room;
-  const pts = [];
-  let y0 = Infinity, y1 = -Infinity;
-  for (const { room, f } of items) {
-    for (const p of furnitureOutline(f)) pts.push(worldToRoom(target, roomToWorld(room, p)));
-    y0 = Math.min(y0, f.y || 0);
-    y1 = Math.max(y1, (f.y || 0) + f.h);
-  }
+  const parts = items.flatMap(({ room, f }) => partsInRoom(f).map((p) => partToRoom(p, room, target)));
+  // układ nowego mebla: prostokąt obejmujący wszystkie części
+  const pts = parts.flatMap((p) => furnitureOutlines(p).flat());
   const r = minAreaRect(pts);
-  // typ i nazwa po największej bryle
+  const y0 = Math.min(...parts.map((p) => p.y));
+  const y1 = Math.max(...parts.map((p) => p.y + p.h));
+  const frame = { x: r.x, z: r.z, rot: r.rot };
+  const localParts = parts.map((p) => {
+    const [lx, lz] = worldToLocal(frame, p.x, p.z);
+    const out = { shape: p.shape, x: lx, z: lz, y: p.y - y0, rot: normalizeAngle(p.rot - frame.rot), w: p.w, d: p.d, h: p.h };
+    if (p.shape === 'L') { out.aw = p.aw; out.ad = p.ad; }
+    return out;
+  });
   const main = items.reduce((a, b) => (a.f.w * a.f.d * a.f.h >= b.f.w * b.f.d * b.f.h ? a : b)).f;
   const merged = createFurniture({
     type: main.type,
     name: main.name,
     color: main.color,
-    x: r.x, z: r.z, y: y0 < 0.03 ? 0 : y0, rot: r.rot,
-    w: Math.max(0.02, r.w), d: Math.max(0.02, r.d), h: y1 - (y0 < 0.03 ? 0 : y0),
+    shape: 'compound',
+    parts: localParts,
+    x: r.x, z: r.z, y: y0, rot: r.rot,
+    w: Math.max(0.02, r.w), d: Math.max(0.02, r.d), h: y1 - y0,
     verified: items.some((it) => it.f.verified),
     notes: items.map((it) => it.f.notes).filter(Boolean).join('\n'),
     sourceLabel: items.map((it) => it.f.sourceLabel).filter(Boolean).join(' + ') || null,
@@ -118,6 +147,106 @@ export function mergeFurniture(project, ids) {
   for (const { room, f } of items) room.furniture = room.furniture.filter((x) => x.id !== f.id);
   target.furniture.push(merged);
   return merged;
+}
+
+/** Rozdziela mebel złożony z powrotem na osobne bryły. Zwraca listę nowych mebli. */
+export function splitFurniture(project, id) {
+  const found = findFurniture(project, id);
+  if (!found || found.f.shape !== 'compound') return [];
+  const { room, f } = found;
+  const out = partsInRoom(f).map((p, i) => {
+    const nf = createFurniture({
+      type: f.type, name: `${f.name} ${i + 1}`, color: f.color, shape: p.shape,
+      x: p.x, z: p.z, y: p.y, rot: p.rot, w: p.w, d: p.d, h: p.h, aw: p.aw, ad: p.ad, verified: f.verified,
+    });
+    nf.scanned = snapshotScanned(nf);
+    return nf;
+  });
+  room.furniture = room.furniture.filter((x) => x.id !== id).concat(out);
+  return out;
+}
+
+/** Zmiana wymiaru (w / d / h) z proporcjonalnym skalowaniem części mebla złożonego. */
+export function resizeFurniture(f, key, value) {
+  value = Math.max(0.02, value);
+  if (f.shape === 'compound' && Array.isArray(f.parts) && f[key] > 0) {
+    const r = value / f[key];
+    for (const p of f.parts) {
+      const q = Math.round(normalizeAngle(p.rot || 0) / (Math.PI / 2));
+      const swapped = Math.abs(q) % 2 === 1;
+      if (key === 'h') { p.y *= r; p.h *= r; continue; }
+      if (key === 'w') p.x *= r; else p.z *= r;
+      const dimKey = (key === 'w') !== swapped ? 'w' : 'd';
+      p[dimKey] *= r;
+      if (p.shape === 'L') { if (dimKey === 'w') p.aw *= r; else p.ad *= r; }
+    }
+  }
+  if (f.shape === 'cylinder' && key === 'w' && Math.abs(f.w - f.d) < 1e-6) f.d = value;
+  f[key] = value;
+}
+
+// ---------- wersje układu (alternatywne przemeblowania) ----------
+function cloneFurnitureList(list) {
+  return JSON.parse(JSON.stringify(list || []));
+}
+
+/** Zapewnia listę wersji; pierwsza to bieżący układ. */
+export function ensureVariants(project) {
+  if (!Array.isArray(project.variants) || !project.variants.length) {
+    const id = uid('var');
+    project.variants = [{ id, name: 'Stan obecny', createdAt: new Date().toISOString(), furniture: {} }];
+    project.activeVariantId = id;
+  }
+  if (!project.variants.some((v) => v.id === project.activeVariantId)) project.activeVariantId = project.variants[0].id;
+  return project.variants;
+}
+
+export function activeVariant(project) {
+  ensureVariants(project);
+  return project.variants.find((v) => v.id === project.activeVariantId);
+}
+
+/** Zapamiętuje meble z pokoi w aktywnej wersji. */
+export function storeActiveVariant(project) {
+  const v = activeVariant(project);
+  v.furniture = {};
+  for (const r of project.rooms) v.furniture[r.id] = cloneFurnitureList(r.furniture);
+  v.updatedAt = new Date().toISOString();
+}
+
+export function switchVariant(project, id) {
+  ensureVariants(project);
+  const target = project.variants.find((v) => v.id === id);
+  if (!target || id === project.activeVariantId) return false;
+  storeActiveVariant(project);
+  for (const r of project.rooms) {
+    // pokój dodany po utworzeniu wersji: zostaje z bieżącymi meblami
+    if (target.furniture && target.furniture[r.id]) r.furniture = cloneFurnitureList(target.furniture[r.id]);
+  }
+  project.activeVariantId = id;
+  return true;
+}
+
+/** Nowa wersja jako kopia bieżącego układu; od razu staje się aktywna. */
+export function createVariant(project, name) {
+  ensureVariants(project);
+  storeActiveVariant(project);
+  const v = { id: uid('var'), name: name || `Wersja ${project.variants.length + 1}`, createdAt: new Date().toISOString(), furniture: {} };
+  for (const r of project.rooms) v.furniture[r.id] = cloneFurnitureList(r.furniture);
+  project.variants.push(v);
+  project.activeVariantId = v.id;
+  return v;
+}
+
+export function deleteVariant(project, id) {
+  ensureVariants(project);
+  if (project.variants.length <= 1) return false;
+  if (id === project.activeVariantId) {
+    const other = project.variants.find((v) => v.id !== id);
+    switchVariant(project, other.id);
+  }
+  project.variants = project.variants.filter((v) => v.id !== id);
+  return true;
 }
 
 export function touch(project) {

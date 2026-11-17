@@ -15,7 +15,9 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - [x] Podgląd trójkątów skanu (siatka Space Setup) na żywo podczas skanowania i edycji w MR.
 - [x] Tryb bez granicy (`unbounded`) z powrotem do `local-floor`; nakładka chowa się przy oknach systemowych.
 - [x] Makieta: na PC widok „🏠 Makieta”, w goglach miniatura mieszkania (obrót, skala, przesuwanie, edycja mebli w miniaturze).
-- [x] Scalanie kilku brył w jeden mebel (PC: Shift/Ctrl + klik, MR: „Scal z…”).
+- [x] Scalanie brył jako suma (kształt złożony, kolizje per bryła), także na etapie „Co to jest?”; rozdzielanie.
+- [x] Gotowy model w pełnym VR: makieta + spacer 1:1 z chodzeniem gałką, pełne parametry mebli w panelu gogli.
+- [x] Wersje układu (alternatywne przemeblowania) na PC i w goglach.
 
 ## Etap 2 — całe mieszkanie
 - [ ] Sprawdzić na prawdziwym Queście 3S, czy Space Setup udostępnia w przeglądarce kilka pokoi naraz (multi-room). Jeśli tak — skan całego mieszkania w jednej sesji i automatyczne ułożenie.

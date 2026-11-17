@@ -165,5 +165,59 @@ test('mergeFurniture: dwie bryły -> jeden mebel obejmujący obie', async () => 
   near(m.x, 1.5, 1e-9); near(m.z, 1, 1e-9);
   assert.equal(m.type, 'couch');
   assert.equal(m.sourceLabel, 'couch + other');
+  assert.equal(m.shape, 'compound');
+  assert.equal(m.parts.length, 2);
   assert.equal(mergeFurniture(p, [m.id]), null);
+  // suma brył: nad niższą częścią (h=0.45) można postawić coś na wysokości 0.5 bez kolizji
+  const shelf = createFurniture({ x: 2, z: 1, y: 0.5, w: 0.4, d: 0.4, h: 0.2 });
+  room.furniture.push(shelf);
+  assert.ok(!computeConflicts(room).has(shelf.id), 'nad niską częścią wolne');
+  shelf.x = 1; // nad wyższą częścią (0.8) — koliduje
+  assert.ok(computeConflicts(room).has(shelf.id), 'w wyższej części kolizja');
+  room.furniture.pop();
+  // przesunięcie i obrót całości przenosi obie części
+  m.rot = Math.PI / 2;
+  const fps = furnitureFootprints(m);
+  assert.equal(fps.length, 2);
+});
+
+test('splitFurniture i resizeFurniture dla kształtu złożonego', async () => {
+  const { mergeFurniture, splitFurniture, resizeFurniture } = await import('../src/model.js');
+  const p = createProject();
+  const room = createRoom({ outline: [[0, 0], [5, 0], [5, 4], [0, 4]] });
+  const a = createFurniture({ x: 1, z: 1, w: 1, d: 0.5, h: 1 });
+  const b = createFurniture({ x: 1.5, z: 1.5, w: 0.5, d: 1, h: 0.5, rot: Math.PI / 2 });
+  room.furniture.push(a, b);
+  p.rooms.push(room);
+  const m = mergeFurniture(p, [a.id, b.id]);
+  const w0 = m.w;
+  resizeFurniture(m, 'w', w0 * 2);
+  near(m.w, w0 * 2, 1e-9);
+  const parts = splitFurniture(p, m.id);
+  assert.equal(parts.length, 2);
+  assert.equal(room.furniture.length, 2);
+  assert.ok(room.furniture.every((f) => f.shape !== 'compound'));
+});
+
+test('wersje układu: przełączanie zachowuje osobne ustawienia mebli', async () => {
+  const { createVariant, switchVariant, deleteVariant, ensureVariants } = await import('../src/model.js');
+  const p = createDemoProject();
+  const vs = ensureVariants(p);
+  const baseId = vs[0].id;
+  const f = p.rooms[0].furniture[0];
+  const x0 = f.x;
+  const v2 = createVariant(p, 'Przemeblowanie');
+  p.rooms[0].furniture[0].x = x0 + 1;
+  p.rooms[0].furniture.pop();
+  const n2 = p.rooms[0].furniture.length;
+  switchVariant(p, baseId);
+  near(p.rooms[0].furniture[0].x, x0, 1e-9);
+  assert.equal(p.rooms[0].furniture.length, n2 + 1);
+  switchVariant(p, v2.id);
+  near(p.rooms[0].furniture[0].x, x0 + 1, 1e-9);
+  assert.equal(p.rooms[0].furniture.length, n2);
+  assert.ok(deleteVariant(p, v2.id));
+  assert.equal(p.activeVariantId, baseId);
+  near(p.rooms[0].furniture[0].x, x0, 1e-9);
+  assert.ok(!deleteVariant(p, baseId), 'ostatniej wersji nie da się usunąć');
 });

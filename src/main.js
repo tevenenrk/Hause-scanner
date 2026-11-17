@@ -1,6 +1,6 @@
 // Punkt wejścia: ekran projektów, edytor, uruchamianie sesji XR.
 import { Editor } from './editor.js';
-import { XRApp, isARSupported } from './xr/xrApp.js';
+import { XRApp, isARSupported, isVRSupported } from './xr/xrApp.js';
 import { listProjects, loadProject, saveProject, deleteProject, rememberLastProject } from './store.js';
 import { createProject, createDemoProject, projectFromJSON, uid } from './model.js';
 
@@ -17,7 +17,7 @@ function toast(msg, isError = false) {
   toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 7000 : 3500);
 }
 
-const state = { xrSupported: false, emulated: null, editor: null, xr: null };
+const state = { xrSupported: false, vrSupported: false, emulated: null, editor: null, xr: null };
 
 async function init() {
   const params = new URLSearchParams(location.search);
@@ -31,6 +31,7 @@ async function init() {
     }
   }
   state.xrSupported = await isARSupported();
+  state.vrSupported = await isVRSupported();
   $('xr-status').textContent = state.emulated
     ? `Emulator Quest 3 · pokój: ${state.emulated}`
     : state.xrSupported ? 'WebXR AR: dostępne ✓' : 'WebXR AR: niedostępne (edycja na PC)';
@@ -71,7 +72,7 @@ function showEditor(project) {
   $('home').hidden = true;
   $('topbar-project').hidden = false;
   rememberLastProject(project.id);
-  state.editor.open(project, { xrSupported: state.xrSupported });
+  state.editor.open(project, { xrSupported: state.xrSupported, vrSupported: state.vrSupported });
 }
 
 async function showHome() {
@@ -141,8 +142,8 @@ let xrSaveTimer = null;
 
 function startXR(mode, editor) {
   if (state.xr) return;
-  if (!state.xrSupported) {
-    toast('WebXR AR nie jest dostępne w tej przeglądarce. Otwórz stronę w przeglądarce Meta Quest.', true);
+  if (mode === 'vr' ? !state.vrSupported : !state.xrSupported) {
+    toast('WebXR nie jest dostępne w tej przeglądarce. Otwórz stronę w przeglądarce Meta Quest.', true);
     return;
   }
   editor.flushSave();
@@ -153,7 +154,7 @@ function startXR(mode, editor) {
     const r = project.rooms.find((x) => x.furniture.some((f) => f.id === sel.id));
     roomId = r && r.id;
   }
-  if (mode === 'edit' && !project.rooms.length) {
+  if ((mode === 'edit' || mode === 'vr') && !project.rooms.length) {
     toast('Projekt nie ma jeszcze pokoi. Najpierw zeskanuj pokój.', true);
     return;
   }
