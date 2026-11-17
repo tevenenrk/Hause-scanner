@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hause Scanner</title>
+  <meta name="description" content="Skan mieszkania na Meta Quest (WebXR) i makieta 3D z przesuwanymi meblami.">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.min.js",
+        "three/addons/": "./vendor/three/addons/",
+        "iwer": "./vendor/iwer/iwer.module.min.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/" title="Lista projektów">⌂ Hause Scanner</a>
+    <div id="topbar-project" class="topbar-project" hidden>
+      <input id="project-name" class="project-name" aria-label="Nazwa projektu">
+      <span id="save-status" class="save-status"></span>
+    </div>
+    <div class="topbar-right">
+      <span id="xr-status" class="xr-status"></span>
+    </div>
+  </header>
+
+  <!-- ===== Ekran startowy ===== -->
+  <main id="home" class="home" hidden>
+    <section class="hero">
+      <h1>Makieta mieszkania z Meta Quest</h1>
+      <p>Zeskanuj pokój goglami (Space Setup), popraw błędy skanu, a potem przesuwaj meble i sprawdzaj, czy się zmieszczą: w edytorze 3D albo w mieszanej rzeczywistości, w skali 1:1.</p>
+      <div class="hero-actions">
+        <button id="btn-new" class="primary">+ Nowy projekt</button>
+        <button id="btn-demo">Otwórz projekt demo</button>
+        <label class="button">Importuj plik…<input id="file-import" type="file" accept=".json,application/json" hidden></label>
+      </div>
+      <p id="xr-hint" class="hint"></p>
+    </section>
+    <section>
+      <h2>Projekty na tym urządzeniu</h2>
+      <ul id="project-list" class="project-list"></ul>
+      <p class="hint">Projekty są zapisywane w przeglądarce tego urządzenia. Aby przenieść projekt między Questem a komputerem, użyj <b>Eksport → plik JSON</b> i zaimportuj go po drugiej stronie.</p>
+    </section>
+  </main>
+
+  <!-- ===== Edytor ===== -->
+  <main id="editor" class="editor" hidden>
+    <nav class="toolbar" id="toolbar">
+      <div class="tb-group" role="group" aria-label="Tryb">
+        <button data-mode="furniture" class="tb-toggle" title="Przesuwanie i edycja mebli (1)">Meble</button>
+        <button data-mode="walls" class="tb-toggle" title="Korekta ścian, drzwi i okien (2)">Ściany</button>
+        <button data-mode="rooms" class="tb-toggle" title="Układanie pokoi w mieszkanie (3)">Pokoje</button>
+        <button data-mode="measure" class="tb-toggle" title="Miarka: kliknij dwa punkty (M)">📏 Miarka</button>
+      </div>
+      <div class="tb-group" role="group" aria-label="Widok">
+        <button data-view="3d" class="tb-toggle" title="Widok 3D (V)">3D</button>
+        <button data-view="top" class="tb-toggle" title="Widok z góry (V)">Z góry</button>
+      </div>
+      <div class="tb-group">
+        <div class="dropdown">
+          <button id="btn-add" title="Dodaj mebel">+ Mebel ▾</button>
+          <div class="menu" id="menu-add"></div>
+        </div>
+        <button id="btn-add-door" title="Dodaj drzwi na zaznaczonej ścianie">+ Drzwi</button>
+        <button id="btn-add-window" title="Dodaj okno na zaznaczonej ścianie">+ Okno</button>
+        <button id="btn-add-room" title="Dodaj pusty pokój (np. do ręcznego narysowania)">+ Pokój</button>
+      </div>
+      <div class="tb-group">
+        <button id="btn-undo" title="Cofnij (Ctrl+Z)">↶</button>
+        <button id="btn-redo" title="Ponów (Ctrl+Y)">↷</button>
+      </div>
+      <div class="tb-group">
+        <div class="dropdown">
+          <button id="btn-show">Pokaż ▾</button>
+          <div class="menu" id="menu-show">
+            <label><input type="checkbox" data-opt="showMesh"> Siatka ze skanu</label>
+            <label><input type="checkbox" data-opt="showGhosts" checked> Pierwotne pozycje mebli</label>
+            <label><input type="checkbox" data-opt="showLabels" checked> Etykiety</label>
+            <label><input type="checkbox" data-opt="showZones" checked> Strefy otwierania drzwi</label>
+            <label><input type="checkbox" data-opt="snap" checked> Przyciąganie do ścian</label>
+            <hr>
+            <span class="menu-title">Ściany</span>
+            <label><input type="radio" name="wallMode" value="full"> pełne</label>
+            <label><input type="radio" name="wallMode" value="low" checked> obniżone</label>
+            <label><input type="radio" name="wallMode" value="hidden"> ukryte</label>
+          </div>
+        </div>
+        <div class="dropdown">
+          <button id="btn-export">Plik ▾</button>
+          <div class="menu" id="menu-export">
+            <button id="btn-export-json">Eksport: projekt (JSON)</button>
+            <button id="btn-export-json-light">Eksport: JSON bez siatki skanu</button>
+            <button id="btn-export-glb">Eksport: model 3D (GLB)</button>
+            <label class="button">Import JSON (zastąp projekt)…<input id="file-import-editor" type="file" accept=".json,application/json" hidden></label>
+          </div>
+        </div>
+      </div>
+      <div class="tb-group tb-xr">
+        <button id="btn-scan" class="xr-btn" title="Odczytaj pokój ze Space Setup i dodaj go do projektu">🥽 Skanuj pokój</button>
+        <button id="btn-mr" class="xr-btn" title="Przesuwaj meble w mieszanej rzeczywistości">🥽 Edytuj w MR</button>
+      </div>
+    </nav>
+
+    <aside class="sidebar left" id="sidebar-left">
+      <div id="verify-card" class="card verify" hidden></div>
+      <div id="room-list"></div>
+      <div id="issues"></div>
+    </aside>
+
+    <div class="viewport" id="viewport">
+      <div id="viewport-hint" class="viewport-hint"></div>
+    </div>
+
+    <aside class="sidebar right" id="sidebar-right">
+      <div id="props"></div>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

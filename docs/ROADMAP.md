@@ -1,0 +1,41 @@
+# Plan rozwoju (zapamiętane założenia)
+
+Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i ruchomymi meblami**, które można przesuwać (na PC i w MR na Queście), z możliwością ręcznej korekty błędów skanu. Nie musi to być jeden program, tylko kilka narzędzi połączonych w łańcuch.
+
+## Etap 1 — zrobione (ta wersja)
+- [x] Odczyt pokoju ze Space Setup na Quest 3/3S w przeglądarce (WebXR `plane-detection` + `mesh-detection`).
+- [x] Konwersja na uproszczony model: obrys, wysokość, drzwi, okna, meble jako bryłki (prostopadłościan / L / walec).
+- [x] „Dopytywanie” bez AI: po skanie aplikacja pokazuje każdy wykryty przedmiot i pyta „Co to jest?” (w MR i na PC).
+- [x] Edytor na PC: przesuwanie, obrót, wymiary, usuwanie, ukrywanie (meble tymczasowe), duplikowanie, kolizje, strefy drzwi, odległości do ścian, miarka, cofnij/ponów.
+- [x] Korekta skanu: narożniki, długości ścian, przesuwanie ścian, drzwi i okna, wysokość pokoju, podgląd siatki ze skanu.
+- [x] Edycja w MR 1:1: chwytanie mebli promieniem/szczypnięciem, obrót gałką, panel 3D, wyrównanie modelu do pokoju.
+- [x] Wiele pokoi w jednym projekcie + ręczne układanie pokoi w mieszkanie (tryb „Pokoje”); przenoszenie mebla między pokojami.
+- [x] Automatyczne dopasowanie sąsiedniego pokoju, jeśli Quest w tej samej sesji udostępnia podłogi kilku pokoi.
+- [x] Eksport JSON (pełny projekt) i GLB (model 3D do Blendera itp.), import pokoi z pliku.
+
+## Etap 2 — całe mieszkanie
+- [ ] Sprawdzić na prawdziwym Queście 3S, czy Space Setup udostępnia w przeglądarce kilka pokoi naraz (multi-room). Jeśli tak — skan całego mieszkania w jednej sesji i automatyczne ułożenie.
+- [ ] Jeśli nie — pokój po pokoju + półautomatyczne łączenie: przyciąganie pokoi po wspólnych drzwiach / równoległych ścianach (grubość ściany jako parametr).
+- [ ] Synchronizacja projektu między Questem a PC bez ręcznego eksportu (np. link/QR + prosty serwer albo GitHub Gist — do decyzji ze względu na prywatność).
+
+## Etap 3 — mapa z robota sprzątającego + Claude
+- [ ] Import mapy z robota (eksport PNG z aplikacji producenta albo mapa z Valetudo/JSON).
+- [ ] Wysłanie do Claude: mapa robota + eksport JSON projektu (obrysy pokoi) → Claude porównuje, wskazuje rozbieżności (np. brakujący róg, przesunięta ściana), proponuje skorygowany plan mieszkania jako JSON w formacie projektu.
+- [ ] Import poprawionego planu do edytora (jako nowa wersja, z możliwością porównania).
+- Uwaga: mapa robota jest 2D i widzi tylko podłogę pod meblami do wysokości robota — dobrze uzupełnia skan Questa (obrys), ale nie zastąpi wysokości ani mebli.
+
+## Etap 4 — zdjęcia i tekstury
+- [ ] Dodawanie zdjęć pokoi do projektu (z telefonu / z passthrough Questa przez Passthrough Camera API w wersji natywnej).
+- [ ] Claude (vision) rozpoznaje materiały i kolory: ściany, podłoga (panele / płytki), fronty mebli → przypisanie materiałów do elementów modelu.
+- [ ] Tekstury: kafelkowalne tekstury podłóg/ścian (generowane lub z biblioteki PBR), kolor/tekstura mebli na podstawie zdjęć.
+- [ ] Opcjonalnie: dokładniejsze modele wybranych mebli (fotogrametria / Gaussian splatting z telefonu) wstawiane w miejsce bryłek.
+- [ ] Eksport makiety z teksturami (GLB).
+
+## Etap 5 — AI w trakcie skanu (wersja natywna lub gdy przeglądarka udostępni kamerę)
+- [ ] Klatka z kamery → model wizyjny → automatyczna propozycja typu mebla i pytanie tylko przy niepewności.
+- [ ] Rozpoznawanie konkretnych modeli (np. IKEA) i podstawianie dokładnych wymiarów.
+
+## Znane ograniczenia
+- Quest 3S nie ma czujnika głębi — dokładność rzędu kilku cm. Krytyczne wymiary warto wpisać z miarki.
+- Space Setup modeluje meble jako prostopadłościany; kształty L/okrągłe trzeba ustawić ręcznie w edytorze.
+- Projekty są zapisywane lokalnie w przeglądarce (IndexedDB) — osobno na Queście i na PC; przenoszenie przez eksport/import JSON.
