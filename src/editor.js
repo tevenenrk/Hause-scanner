@@ -11,10 +11,11 @@ import {
 } from './geometry.js';
 import {
   History, createFurniture, createOpening, createRoom, findFurniture, snapshotScanned, projectToJSON, projectFromJSON, uid,
-  mergeFurniture, splitFurniture, resizeFurniture, ensureVariants, switchVariant, createVariant, deleteVariant, activeVariant,
+  mergeFurniture, splitFurniture, resizeFurniture, linkDoors, unlinkDoor, ensureVariants, switchVariant, createVariant, deleteVariant, activeVariant,
 } from './model.js';
 import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from './labels.js';
 import { saveProject } from './store.js';
+import { applyScanShape, applyBoxShape } from './scanShape.js';
 
 const cm = (m) => Math.round(m * 1000) / 10; // metry -> cm z dokładnością 1 mm
 const fmtCm = (m) => `${Math.round(m * 100)} cm`;
@@ -332,6 +333,28 @@ export class Editor {
     return [s.id, ...this.extra];
   }
 
+  /** Prostopadłościan albo uproszczony kształt z trójkątów skanu. */
+  applyShapeChoice(kind) {
+    const s = this.selected();
+    if (!s || !s.f) return;
+    if (kind === 'box') { applyBoxShape(s.f); this.commit(); return; }
+    const err = applyScanShape(s.room, s.f);
+    if (err) this.toast(err, true);
+    else this.toast(`Kształt ze skanu: ${s.f.parts.length} części.`);
+    this.commit();
+  }
+
+  /** Łączenie drzwi: po wybraniu drzwi kliknij drzwi w drugim pokoju (ten pokój zostanie przesunięty). */
+  startDoorPick() {
+    const s = this.selection;
+    if (!s || s.kind !== 'opening') return;
+    const wall = parseFloat((document.getElementById('link-wall') || {}).value);
+    this.doorPick = { roomId: s.roomId, id: s.id, wall: isFinite(wall) ? wall / 100 : 0.12 };
+    if (this.mode !== 'walls') this.setMode('walls');
+    this.el.hint.textContent = 'Łączenie drzwi: kliknij drzwi w drugim pokoju. Tamten pokój zostanie ustawiony tak, żeby drzwi były naprzeciw siebie. Esc anuluje.';
+    this.toast('Kliknij drzwi w drugim pokoju.');
+  }
+
   /** Tryb „wskaż drugą bryłę do scalenia” (karta rozpoznawania i panel mebla). */
   startMergePick() {
     const s = this.selection;
@@ -565,6 +588,21 @@ export class Editor {
         return;
       }
       const hit = this.hitObjects(this.view3d.getPickables(['opening', 'wall']));
+      if (hit && hit.object.userData.kind === 'opening' && this.doorPick) {
+        const { roomId, id } = hit.object.userData;
+        const dp = this.doorPick;
+        if (roomId === dp.roomId) { this.toast('Wybierz drzwi w INNYM pokoju.', true); this.stopControls(e); return; }
+        this.doorPick = null;
+        if (linkDoors(this.project, dp.roomId, dp.id, roomId, id, dp.wall)) {
+          this.selection = { kind: 'opening', roomId: dp.roomId, id: dp.id };
+          this.commit();
+          this.setMode('walls');
+          this.frameAll();
+          this.toast(`Połączono: ${this.room(dp.roomId).name} ↔ ${this.room(roomId).name}`);
+        }
+        this.stopControls(e);
+        return;
+      }
       if (hit && hit.object.userData.kind === 'opening') {
         const { roomId, id } = hit.object.userData;
         const room = this.room(roomId);
@@ -1027,6 +1065,7 @@ export class Editor {
     if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); this.deleteSelected(); return; }
     if (k === 'Escape') {
       if (this.mergePick) { this.mergePick = null; this.setMode('furniture'); return; }
+      if (this.doorPick) { this.doorPick = null; this.setMode('walls'); return; }
       this.measure = []; this.select(null); return;
     }
     if (k === 'r' || k === 'R') { this.rotateSelected((e.shiftKey ? -1 : 1) * rad(15)); return; }
@@ -1052,7 +1091,8 @@ export class Editor {
   }
 
   renderPropsIfIdle() {
-    if (this.el.props.contains(document.activeElement)) return;
+    const ae = document.activeElement;
+    if (this.el.props.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
     this.renderProps();
   }
 
@@ -1074,7 +1114,9 @@ export class Editor {
     this.renderRoomList();
     this.renderIssues();
     this.renderVerify();
-    if (!this.el.props.contains(document.activeElement) || !this.lastPropsKey || this.lastPropsKey !== this.propsKey()) this.renderProps();
+    const ae = document.activeElement;
+    const editing = this.el.props.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName);
+    if (!editing || !this.lastPropsKey || this.lastPropsKey !== this.propsKey()) this.renderProps();
   }
 
   propsKey() {
@@ -1166,6 +1208,10 @@ export class Editor {
       <div class="note">Skaner: <b>${esc(f.sourceLabel || '—')}</b> · ${Math.round(f.w * 100)}×${Math.round(f.d * 100)}×${Math.round(f.h * 100)} cm</div>
       <div class="chips">${chips}</div>
       <div class="chips">
+        <button data-vshape="box" ${f.shape !== 'compound' ? 'class="primary"' : ''} title="Uproszczenie do prostopadłościanu">▭ Prostopadłościan</button>
+        <button data-vshape="scan" ${f.fromScan ? 'class="primary"' : ''} title="Uproszczony kształt z trójkątów skanu (np. siedzisko + oparcie)">⌓ Kształt ze skanu</button>
+      </div>
+      <div class="chips">
         <button data-vok>✓ Zgadza się</button>
         <button data-vmerge title="Gdy skaner podzielił jeden mebel na kilka brył">${this.mergePick ? '… wskaż drugą bryłę' : '⧉ Scal z inną bryłą'}</button>
         <button data-vhide title="Zostaje w danych, ale znika z makiety">Tymczasowy — ukryj</button>
@@ -1177,6 +1223,7 @@ export class Editor {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.hasAttribute('data-vmerge')) { this.startMergePick(); return; }
+    if (b.dataset.vshape) { this.applyShapeChoice(b.dataset.vshape); return; }
     if (b.hasAttribute('data-vstart')) {
       const n = this.nextUnverified();
       if (n) { this.setMode('furniture'); this.select({ kind: 'furniture', id: n.f.id }); }
@@ -1241,6 +1288,10 @@ export class Editor {
         <div class="row"><span>Nazwa</span><input data-k="name" value="${esc(f.name)}"></div>
         <div class="row"><span>Typ</span><select data-k="type">${typeOpts}</select></div>
         <div class="row"><span>Kształt</span><select data-k="shape">${shapeOpts}</select></div>
+        <div class="btns">
+          <button data-act="shapeBox" ${f.shape === 'box' ? 'class="primary"' : ''}>▭ Prostopadłościan</button>
+          <button data-act="shapeScan" ${f.fromScan ? 'class="primary"' : ''} title="Uproszczony kształt z trójkątów skanu">⌓ Kształt ze skanu</button>
+        </div>
         <h3>Wymiary [cm]</h3>
         <div class="row3">
           <label>${f.shape === 'cylinder' ? 'Średnica X' : 'Szerokość'}${num('w', cm(f.w), 0.5, 'min="1"')}</label>
@@ -1314,6 +1365,14 @@ export class Editor {
         </div>
         <div class="row"><span>Parapet [cm]</span>${num('opSill', cm(op.sill || 0), 1, 'min="0"')}</div>
         ${op.type === 'door' ? `<div class="row"><span>Otwierane</span><select data-k="opSwing">${swingOpts}</select></div>` : ''}
+        ${op.type === 'door' ? `
+        <h3>Prowadzą do pokoju</h3>
+        ${op.link && this.room(op.link.roomId)
+          ? `<div class="note">Połączone z: <b>${esc(this.room(op.link.roomId).name)}</b> (ściana ${Math.round((op.link.wall ?? 0.12) * 100)} cm)</div>
+             <div class="btns"><button data-act="relinkDoor" title="Ustaw ten pokój ponownie naprzeciw połączonych drzwi">↻ Wyrównaj ponownie</button><button data-act="unlinkDoor">Odłącz</button></div>`
+          : `<div class="row"><span>Grubość ściany</span><input type="number" id="link-wall" value="12" step="1" min="0"></div>
+             <div class="btns"><button class="primary" data-act="linkDoor">🔗 Połącz z drzwiami innego pokoju</button></div>
+             <div class="note">Potem kliknij drzwi w drugim pokoju — tamten pokój ustawi się po drugiej stronie ściany. Zbędne drzwi (np. otwarte skrzydło rozpoznane jako drugie drzwi) usuń przyciskiem „Usuń”.</div>`}` : ''}
         <div class="btns"><button class="danger" data-act="del">Usuń</button></div>`;
     } else if (s && s.kind === 'room' && sel) {
       const room = sel.room;
@@ -1430,6 +1489,15 @@ export class Editor {
       case 'dup': this.duplicateSelected(); break;
       case 'merge': this.mergeSelected(); break;
       case 'mergePick': this.startMergePick(); break;
+      case 'shapeBox': this.applyShapeChoice('box'); break;
+      case 'shapeScan': this.applyShapeChoice('scan'); break;
+      case 'linkDoor': this.startDoorPick(); break;
+      case 'unlinkDoor': unlinkDoor(this.project, sel.room.id, sel.op.id); this.commit(); break;
+      case 'relinkDoor': {
+        const l = sel.op.link;
+        if (l) { linkDoors(this.project, l.roomId, l.openingId, sel.room.id, sel.op.id, l.wall ?? 0.12); this.commit(); }
+        break;
+      }
       case 'split': {
         const parts = splitFurniture(this.project, sel.f.id);
         if (parts.length) { this.selection = { kind: 'furniture', id: parts[0].id }; this.commit(); this.toast(`Rozdzielono na ${parts.length} bryły.`); }

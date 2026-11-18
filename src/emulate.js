@@ -1,7 +1,7 @@
 // Tryb emulacji WebXR na komputerze (Meta Immersive Web Emulation Runtime + prawdziwe skany pokoi z Questa).
 // Użycie: index.html?emulate=office_small  (dostępne: office_small, living_room, meeting_room)
 
-export const CAPTURES = ['office_small', 'living_room', 'meeting_room'];
+export const CAPTURES = ['office_small', 'living_room', 'meeting_room', 'two_rooms'];
 
 export async function setupEmulation(envName, { devUI = true } = {}) {
   const env = CAPTURES.includes(envName) ? envName : 'office_small';

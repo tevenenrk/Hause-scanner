@@ -221,3 +221,25 @@ test('wersje układu: przełączanie zachowuje osobne ustawienia mebli', async (
   near(p.rooms[0].furniture[0].x, x0, 1e-9);
   assert.ok(!deleteVariant(p, baseId), 'ostatniej wersji nie da się usunąć');
 });
+
+test('linkDoors ustawia pokój B naprzeciw drzwi pokoju A', async () => {
+  const { linkDoors, unlinkDoor } = await import('../src/model.js');
+  const { openingSegment, roomToWorld } = await import('../src/geometry.js');
+  const p = createProject();
+  const A = createRoom({ outline: [[0, 0], [4, 0], [4, 3], [0, 3]] });
+  const B = createRoom({ outline: [[0, 0], [3, 0], [3, 3.5], [0, 3.5]], transform: { x: 10, z: 7, rot: 1.1 } });
+  const dA = createOpening({ type: 'door', edge: 1, offset: 1, width: 0.9 }); // ściana x=4
+  const dB = createOpening({ type: 'door', edge: 0, offset: 0.5, width: 0.9 }); // ściana z=0 pokoju B
+  A.openings.push(dA); B.openings.push(dB);
+  p.rooms.push(A, B);
+  assert.ok(linkDoors(p, A.id, dA.id, B.id, dB.id, 0.12));
+  const mid = (room, op) => { const s = openingSegment(room.outline, op); return roomToWorld(room, [(s.p0[0] + s.p1[0]) / 2, (s.p0[1] + s.p1[1]) / 2]); };
+  const ca = mid(A, dA), cb = mid(B, dB);
+  near(cb[0] - ca[0], 0.12, 1e-9); near(cb[1] - ca[1], 0, 1e-9);
+  // pokój B leży po drugiej stronie ściany (x > 4)
+  const bCenter = roomToWorld(B, [1.5, 1.75]);
+  assert.ok(bCenter[0] > 4.1, `B: ${bCenter}`);
+  assert.equal(dA.link.roomId, B.id);
+  unlinkDoor(p, A.id, dA.id);
+  assert.ok(!dA.link && !dB.link);
+});

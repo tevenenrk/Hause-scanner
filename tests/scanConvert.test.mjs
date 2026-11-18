@@ -119,3 +119,58 @@ test('mat4InvertRigid', () => {
   const p = mat4TransformPoint(inv, ...toWorld(0.3, 1.2, -0.7));
   near(p[0], 0.3); near(p[1], 1.2); near(p[2], -0.7);
 });
+
+// ---------- kilka pokoi w jednym Space Setup ----------
+function twoRoomScene() {
+  // pokój A: x∈[0,4], z∈[0,3]; pokój B: x∈[4.12,7.12], z∈[0,3] (ściana 12 cm)
+  const rect = (x0, z0, x1, z1) => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+  const A = rect(0, 0, 4, 3), B = rect(4.12, 0, 7.12, 3);
+  const floorPlane = (r) => {
+    const cx = (r[0][0] + r[2][0]) / 2, cz = (r[0][1] + r[2][1]) / 2;
+    return { label: 'floor', matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, cx, 0, cz, 1], polygon: r.map(([x, z]) => [x - cx, 0, z - cz]) };
+  };
+  const wallsOf = (r) => r.map((a, i) => { const b = r[(i + 1) % 4]; return { label: 'wall', matrix: I, polygon: [[a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], 2.5, b[1]], [a[0], 2.5, a[1]]] }; });
+  const box = (cx, cz, w, d, h) => { const v = []; for (const [x, z] of [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]]) for (const y of [0, h]) v.push(cx + x, y, cz + z); return new Float32Array(v); };
+  // „globalna” siatka pokoju B bez etykiety: dużo wierzchołków
+  const gv = [];
+  for (let i = 0; i < 400; i++) gv.push(4.2 + Math.random() * 2.8, Math.random() * 2.4, 0.1 + Math.random() * 2.8);
+  const planes = [
+    floorPlane(A), floorPlane(B), ...wallsOf(A), ...wallsOf(B),
+    { label: 'ceiling', matrix: I, polygon: A.map(([x, z]) => [x, 2.5, z]) },
+    { label: 'ceiling', matrix: I, polygon: B.map(([x, z]) => [x, 2.7, z]) },
+    // drzwi między pokojami, zaznaczone dwa razy (po obu stronach i nakładające się)
+    { label: 'door', matrix: I, polygon: [[4, 0, 1], [4, 0, 1.9], [4, 2, 1.9], [4, 2, 1]] },
+    { label: 'door', matrix: I, polygon: [[4, 0, 1.2], [4, 0, 2.0], [4, 2, 2.0], [4, 2, 1.2]] },
+  ];
+  const meshes = [
+    { label: 'couch', matrix: I, vertices: box(1.5, 1, 2, 0.9, 0.8), indices: new Uint32Array([0, 1, 2]) },
+    { label: 'bed', matrix: I, vertices: box(5.6, 1.5, 1.6, 2, 0.5), indices: new Uint32Array([0, 1, 2]) },
+    { label: 'other', matrix: I, vertices: new Float32Array(gv), indices: new Uint32Array([0, 1, 2, 3, 4, 5]) },
+  ];
+  return { planes, meshes };
+}
+
+test('wiele pokoi: wybór pokoju, w którym stoi użytkownik, bez elementów sąsiedniego', async () => {
+  const s = twoRoomScene();
+  const a = convertScene(s, { viewerPoint: [1, 1] }).room;
+  near(Math.abs(polygonArea(a.outline)), 12, 1e-3);
+  near(a.height, 2.5, 1e-3);
+  assert.deepEqual(a.furniture.map((f) => f.type), ['couch']);
+  assert.equal(a.openings.filter((o) => o.type === 'door').length, 1, 'zdublowane drzwi scalone');
+  near(a.openings[0].width, 1.0, 1e-3);
+  const b = convertScene(s, { viewerPoint: [6, 1] }).room;
+  near(Math.abs(polygonArea(b.outline)), 9, 1e-3);
+  near(b.height, 2.7, 1e-3);
+  assert.deepEqual(b.furniture.map((f) => f.type), ['bed'], 'siatka bez etykiety nie staje się bryłą wielkości pokoju');
+  assert.ok(b.scan.mesh.positions.length > 0);
+});
+
+test('convertAllRooms układa pokoje względem siebie', async () => {
+  const { convertAllRooms } = await import('../src/scanConvert.js');
+  const res = convertAllRooms(twoRoomScene());
+  assert.equal(res.length, 2);
+  const [ra, rb] = res.map((r) => r.room);
+  // środek pokoju B w układzie mieszkania = 4.12 m dalej w osi X niż A (oba środki: A (2,1.5), B (5.62,1.5))
+  near(rb.transform.x - ra.transform.x, 3.62, 1e-3);
+  near(rb.transform.z - ra.transform.z, 0, 1e-3);
+});

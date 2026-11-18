@@ -11,6 +11,8 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - **pokazuje na żywo trójkąty skanu** (siatkę Space Setup), płaszczyzny i bryły mebli. Tam, gdzie nie ma trójkątów, pokój nie jest zeskanowany,
 - działa w trybie **bez granicy** (przestrzeń `unbounded` przeglądarki Questa), więc możesz chodzić po mieszkaniu. Gdy gogle go nie udostępnią, aplikacja wraca do zwykłego trybu z granicą,
 - zamienia skan na prosty model: obrys pokoju, wysokość, otwory i meble jako bryłki,
+- **wiele pokoi**: gdy Space Setup zawiera kilka pokoi, zapisujesz **pokój, w którym stoisz** (bez ścian, mebli i siatki sąsiednich) albo **wszystkie pokoje naraz**, ułożone względem siebie tak jak w rzeczywistości. Pokój zapisany wcześniej nie jest dublowany, a reszta układa się względem niego. Bryły wielkości całego pokoju (siatki innych pokoi) są odrzucane, a zdublowane drzwi na tej samej ścianie scalane,
+- przy każdym meblu wybierasz **prostopadłościan** albo **kształt ze skanu**: uproszczoną bryłę z trójkątów skanu, np. kanapa jako siedzisko, podłokietniki i oparcie,
 - po zapisie **dopytuje**, co to za przedmiot („Co to jest? Stół / Kanapa / …”), i pozwala oznaczyć mebel jako tymczasowy albo usunąć go. Już na tym etapie możesz **scalić bryły** („Scal z inną bryłą”), jeśli skaner podzielił jeden mebel na kilka.
 
 **Edytor (PC lub przeglądarka Questa)**
@@ -23,13 +25,14 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - przerywany obrys pokazuje, gdzie mebel stał w skanie („↺ Jak w skanie” przywraca tę pozycję),
 - **korekta błędów skanu**: narożniki, długości ścian, przesuwanie ścian, drzwi i okna, wysokość, podgląd siatki 3D ze skanu,
 - wiele pokoi w jednym projekcie i układanie ich w mieszkanie; mebel przeciągnięty do innego pokoju zmienia przynależność,
+- **łączenie drzwi między pokojami**: w trybie „Ściany” zaznacz drzwi i wybierz „🔗 Połącz z drzwiami innego pokoju”, potem kliknij drzwi w drugim pokoju. Tamten pokój ustawi się po drugiej stronie ściany (grubość do ustawienia). Zbędne drzwi (np. otwarte skrzydło rozpoznane jako drugie drzwi) usuwasz przyciskiem „Usuń”,
 - miarka, cofnij i ponów, widok 3D i z góry, eksport **JSON** (projekt) oraz **GLB** (model 3D, np. do Blendera).
 
 **Edycja w MR (na Queście)**
 - model nakłada się na prawdziwy pokój (dopasowanie po podłodze ze Space Setup) z możliwością ręcznego wyrównania,
 - chwytanie mebli promieniem kontrolera albo szczypnięciem, obrót gałką,
 - panel 3D: obrót, wymiary ±1/±5 cm, dosuwanie do ściany, typ, **scalanie** („Scal z…”, potem wskazujesz drugą bryłę), duplikowanie, ukrywanie, usuwanie, cofanie, dodawanie mebli,
-- **🏠 Makieta w goglach**: miniatura mieszkania przed Tobą. Gałka obraca (lewo/prawo) i skaluje (góra/dół), spust na podłodze makiety ją przesuwa, a meble chwytasz i przesuwasz także w miniaturze,
+- **🏠 Makieta w goglach**: miniatura mieszkania przed Tobą. **Grip** (albo szczypnięcie poza meblem) chwyta makietę ręką: przenosisz ją i obracasz. **Obie ręce naraz**: rozsuwanie dłoni powiększa, zsuwanie zmniejsza. Gałka też obraca i skaluje. Meble chwytasz i przesuwasz także w miniaturze,
 - trójkąty skanu na żywo (można wyłączyć),
 - **pełne parametry w goglach** („Więcej…”): kształt, wysokość nad podłogą, przesuwanie o 1 cm, kolor, „Jak w skanie”, potwierdzenie, rozdzielanie brył, wolne miejsce wokół (linie z odległościami), lista ukrytych mebli, wersje układu.
 
@@ -83,7 +86,7 @@ Projekty są zapisywane w przeglądarce danego urządzenia. Aby edytować na kom
 
 ## Test bez gogli (emulator)
 
-Do adresu dodaj `?emulate=office_small` (albo `living_room`, `meeting_room`). Uruchomi się emulator Meta Quest 3 (IWER) z prawdziwymi skanami pokoi z Questa. Przyciski 🥽 działają wtedy na komputerze, a panel emulatora pozwala sterować kontrolerami.
+Do adresu dodaj `?emulate=office_small` (albo `living_room`, `meeting_room`, `two_rooms` — test dwóch pokoi w jednym Space Setup). Uruchomi się emulator Meta Quest 3 (IWER) z prawdziwymi skanami pokoi z Questa. Przyciski 🥽 działają wtedy na komputerze, a panel emulatora pozwala sterować kontrolerami.
 
 ## Testy
 

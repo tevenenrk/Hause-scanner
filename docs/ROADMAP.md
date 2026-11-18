@@ -18,6 +18,11 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - [x] Scalanie brył jako suma (kształt złożony, kolizje per bryła), także na etapie „Co to jest?”; rozdzielanie.
 - [x] Gotowy model w pełnym VR: makieta + spacer 1:1 z chodzeniem gałką, pełne parametry mebli w panelu gogli.
 - [x] Wersje układu (alternatywne przemeblowania) na PC i w goglach.
+- [x] Wiele pokoi w Space Setup: zapis pokoju, w którym stoisz, albo wszystkich naraz (z ułożeniem); odrzucanie brył wielkości pokoju i siatek innych pokoi; scalanie zdublowanych drzwi.
+- [x] Łączenie drzwi między pokojami (ustawia pokoje względem siebie).
+- [x] Makieta: chwytanie ręką (grip / szczypnięcie), skalowanie dwiema rękami.
+- [x] Kształt ze skanu (mapa wysokości z trójkątów → bryła złożona) jako alternatywa dla prostopadłościanu.
+- [ ] Łączenie drzwi także w goglach (na razie na PC).
 
 ## Etap 2 — całe mieszkanie
 - [ ] Sprawdzić na prawdziwym Queście 3S, czy Space Setup udostępnia w przeglądarce kilka pokoi naraz (multi-room). Jeśli tak — skan całego mieszkania w jednej sesji i automatyczne ułożenie.

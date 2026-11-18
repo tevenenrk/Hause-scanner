@@ -1,6 +1,6 @@
 // Model danych: projekt (mieszkanie) -> pomieszczenia -> meble / otwory.
 import { FURNITURE_TYPES, typeName, typeColor } from './labels.js';
-import { ensurePositive, polygonArea, furnitureOutlines, minAreaRect, roomToWorld, worldToRoom, localToWorld, worldToLocal, normalizeAngle } from './geometry.js';
+import { ensurePositive, polygonArea, openingSegment, furnitureOutlines, minAreaRect, roomToWorld, worldToRoom, localToWorld, worldToLocal, normalizeAngle } from './geometry.js';
 
 export const MODEL_VERSION = 1;
 
@@ -247,6 +247,53 @@ export function deleteVariant(project, id) {
   }
   project.variants = project.variants.filter((v) => v.id !== id);
   return true;
+}
+
+// ---------- łączenie pokoi przez drzwi ----------
+function rotVec(v, rot) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return [v[0] * c + v[1] * s, -v[0] * s + v[1] * c];
+}
+
+/** Środek drzwi i normalna na zewnątrz pokoju (w układzie pokoju). */
+function doorFrame(room, op) {
+  const { p0, p1, edge } = openingSegment(room.outline, op);
+  return { c: [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2], out: [-edge.inward[0], -edge.inward[1]] };
+}
+
+/**
+ * Łączy drzwi opA (pokój A, nieruchomy) z drzwiami opB (pokój B — przesuwany i obracany),
+ * tak żeby były naprzeciw siebie po dwóch stronach ściany o grubości `wall` [m].
+ */
+export function linkDoors(project, roomAId, opAId, roomBId, opBId, wall = 0.12) {
+  const A = project.rooms.find((r) => r.id === roomAId), B = project.rooms.find((r) => r.id === roomBId);
+  if (!A || !B || A === B) return false;
+  const opA = A.openings.find((o) => o.id === opAId), opB = B.openings.find((o) => o.id === opBId);
+  if (!opA || !opB) return false;
+  const fa = doorFrame(A, opA), fb = doorFrame(B, opB);
+  const cA = roomToWorld(A, fa.c);
+  const nA = rotVec(fa.out, A.transform.rot || 0);
+  const target = [cA[0] + nA[0] * wall, cA[1] + nA[1] * wall];
+  // obrót B: jego normalna na zewnątrz ma wskazywać przeciwnie do normalnej A
+  const phi = (v) => Math.atan2(v[1], v[0]);
+  const rot = normalizeAngle(phi(fb.out) - phi([-nA[0], -nA[1]]));
+  const cb = rotVec(fb.c, rot);
+  B.transform = { x: target[0] - cb[0], z: target[1] - cb[1], rot };
+  unlinkDoor(project, roomAId, opAId);
+  unlinkDoor(project, roomBId, opBId);
+  opA.link = { roomId: B.id, openingId: opB.id, wall };
+  opB.link = { roomId: A.id, openingId: opA.id, wall };
+  return true;
+}
+
+export function unlinkDoor(project, roomId, opId) {
+  const room = project.rooms.find((r) => r.id === roomId);
+  const op = room && room.openings.find((o) => o.id === opId);
+  if (!op || !op.link) return;
+  const other = project.rooms.find((r) => r.id === op.link.roomId);
+  const oop = other && other.openings.find((o) => o.id === op.link.openingId);
+  if (oop) delete oop.link;
+  delete op.link;
 }
 
 export function touch(project) {

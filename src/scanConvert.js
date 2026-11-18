@@ -134,18 +134,67 @@ function nearestEdge(outline, center, dirSeg) {
   return best;
 }
 
+/** Odległość punktu od brzegu obrysu. */
+function distToOutline(pt, outline) {
+  let d = Infinity;
+  for (let k = 0; k < outline.length; k++) d = Math.min(d, distPointSegment(pt, outline[k], outline[(k + 1) % outline.length]));
+  return d;
+}
+
+/** Punkt należy do pokoju: wewnątrz obrysu albo najwyżej `margin` od jego brzegu. */
+function inRoom(pt, outline, margin = 0.15) {
+  return pointInPolygon(pt, outline) || distToOutline(pt, outline) <= margin;
+}
+
+/** Siatka wyglądająca na globalną (tysiące wierzchołków), nawet bez etykiety — bryły mebli mają ich kilka-kilkanaście. */
+function isGlobalMeshLike(m) {
+  return m.label === 'global mesh' || (m.vertices && m.vertices.length / 3 > 300 && !['table', 'couch', 'bed', 'desk', 'storage', 'shelf', 'screen', 'lamp', 'plant', 'chair'].includes(m.label));
+}
+
+const ORIENTATION_LABELS = new Set(['horizontal', 'vertical', 'plane', 'mesh', '']);
+
+/** Płaszczyzny podłóg w danych sceny (każda = osobny pokój w Space Setup). */
+export function listFloors(scanData) {
+  const out = [];
+  (scanData.planes || []).forEach((p, index) => {
+    if (normalizeLabel(p.label) !== 'floor' || !p.polygon || p.polygon.length < 3) return;
+    const frame = roomFrameFromFloor(p.matrix);
+    const inv = mat4InvertRigid(frame);
+    const m = mat4Multiply(inv, p.matrix);
+    const poly = p.polygon.map((q) => { const r = mat4TransformPoint(m, q[0], q[1] ?? 0, q[2]); return [r[0], r[2]]; });
+    out.push({ index, area: Math.abs(polygonArea(poly)), matrix: p.matrix, frame, polyRoom: poly });
+  });
+  return out;
+}
+
+/** Indeks podłogi, na której stoi punkt świata [x, z] (np. głowa użytkownika); null gdy żadna. */
+export function floorAtPoint(floors, pt) {
+  for (const f of floors) {
+    const inv = mat4InvertRigid(f.frame);
+    const q = mat4TransformPoint(inv, pt[0], 0, pt[1]);
+    if (pointInPolygon([q[0], q[2]], f.polyRoom)) return f.index;
+  }
+  return null;
+}
+
 /**
- * Główna konwersja. Zwraca { room, stats }.
+ * Główna konwersja jednego pokoju. Zwraca { room, stats, frame }.
+ * opts.floorIndex — która płaszczyzna podłogi (gdy Space Setup ma kilka pokoi);
+ * opts.viewerPoint — [x, z] w świecie: wybierz pokój, w którym stoi użytkownik.
+ * Elementy spoza obrysu wybranego pokoju (ściany, meble, siatka innych pokoi) są pomijane.
  */
 export function convertScene(scanData, opts = {}) {
   const planes = (scanData.planes || []).map((p) => ({ ...p, label: normalizeLabel(p.label) }));
   const meshes = (scanData.meshes || []).map((m) => ({ ...m, label: normalizeLabel(m.label) }));
-  const stats = { planes: planes.length, meshes: meshes.length, walls: 0, doors: 0, windows: 0, furniture: 0, warnings: [] };
+  const stats = { planes: planes.length, meshes: meshes.length, walls: 0, doors: 0, windows: 0, furniture: 0, warnings: [], floors: 0, skipped: 0 };
 
-  // 1. Układ pomieszczenia = płaszczyzna podłogi (największa)
-  const floors = planes.filter((p) => p.label === 'floor' && p.polygon && p.polygon.length >= 3);
-  floors.sort((a, b) => Math.abs(polygonArea(b.polygon.map((q) => [q[0], q[2]]))) - Math.abs(polygonArea(a.polygon.map((q) => [q[0], q[2]]))));
-  const floor = floors[0] || null;
+  // 1. Układ pomieszczenia = wybrana płaszczyzna podłogi
+  const floorsInfo = listFloors(scanData);
+  stats.floors = floorsInfo.length;
+  let floorIdx = opts.floorIndex ?? null;
+  if (floorIdx === null && opts.viewerPoint && floorsInfo.length) floorIdx = floorAtPoint(floorsInfo, opts.viewerPoint);
+  if (floorIdx === null && floorsInfo.length) floorIdx = floorsInfo.reduce((a, b) => (b.area > a.area ? b : a)).index;
+  const floor = floorIdx !== null ? planes[floorIdx] : null;
   let frame;
   if (floor) {
     frame = roomFrameFromFloor(floor.matrix);
@@ -156,11 +205,10 @@ export function convertScene(scanData, opts = {}) {
   const toRoom = mat4InvertRigid(frame);
 
   // 2. Ściany
-  const walls = planes
+  let walls = planes
     .filter((p) => isWallLabel(p.label) && p.polygon && p.polygon.length >= 2)
     .map((p) => verticalPlaneSegment(planePointsInRoom(p, toRoom)))
     .filter((w) => w.length > 0.2);
-  stats.walls = walls.length;
 
   // jeśli nie było podłogi, poziom podłogi = najniższy punkt ścian
   if (!floor && walls.length) {
@@ -183,14 +231,20 @@ export function convertScene(scanData, opts = {}) {
     outline = [[-2, -1.5], [2, -1.5], [2, 1.5], [-2, 1.5]];
   }
   outline = ensurePositive(outline);
+  const roomArea = Math.abs(polygonArea(outline));
+  let maxExtent = 0;
+  for (const a of outline) for (const b of outline) maxExtent = Math.max(maxExtent, dist(a, b));
 
-  // 4. Wysokość
+  // tylko ściany tego pokoju (środek odcinka przy obrysie)
+  if (floor) walls = walls.filter((w) => distToOutline([(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2], outline) < 0.4);
+  stats.walls = walls.length;
+
+  // 4. Wysokość — sufit nad tym pokojem
   let height = null;
-  const ceil = planes.find((p) => p.label === 'ceiling' && p.polygon && p.polygon.length);
-  if (ceil) {
-    const pts = planePointsInRoom(ceil, toRoom2);
-    height = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-  }
+  const centroid = outline.reduce((s, q) => [s[0] + q[0] / outline.length, s[1] + q[1] / outline.length], [0, 0]);
+  const ceilings = planes.filter((p) => p.label === 'ceiling' && p.polygon && p.polygon.length >= 3).map((p) => planePointsInRoom(p, toRoom2));
+  const ceil = ceilings.find((pts) => pointInPolygon(centroid, ensurePositive(pts.map((q) => [q[0], q[2]])))) || (floorsInfo.length <= 1 ? ceilings[0] : null);
+  if (ceil) height = ceil.reduce((s, p) => s + p[1], 0) / ceil.length;
   if (!height || height < 1.8 || height > 6) height = walls.length ? Math.max(...walls.map((w) => w.y1)) : 2.6;
   if (!height || height < 1.8 || height > 6) height = 2.6;
 
@@ -201,13 +255,13 @@ export function convertScene(scanData, opts = {}) {
     scan: {
       source: opts.source || 'quest',
       capturedAt: new Date().toISOString(),
-      floorArea: Math.abs(polygonArea(outline)),
+      floorArea: roomArea,
       floorPerimeter: polygonPerimeter(outline),
       hadFloorPlane: !!floor,
     },
   });
 
-  // 5. Drzwi i okna
+  // 5. Drzwi i okna (bez duplikatów na tej samej ścianie)
   for (const p of planes) {
     const isDoor = isDoorLabel(p.label), isWin = isWindowLabel(p.label);
     if (!isDoor && !isWin) continue;
@@ -215,31 +269,42 @@ export function convertScene(scanData, opts = {}) {
     if (seg.length < 0.3) continue;
     const center = [(seg.a[0] + seg.b[0]) / 2, (seg.a[1] + seg.b[1]) / 2];
     const ne = nearestEdge(outline, center, norm(sub(seg.b, seg.a)));
-    if (!ne || ne.d > 0.5) { stats.warnings.push(`Pominięto ${isDoor ? 'drzwi' : 'okno'} — nie leży przy żadnej ścianie.`); continue; }
+    if (!ne || ne.d > 0.5) continue; // drzwi innego pokoju albo otwarte skrzydło
     const t0 = projectT(seg.a, ne.e.a, ne.e.b) * ne.e.length;
     const t1 = projectT(seg.b, ne.e.a, ne.e.b) * ne.e.length;
     let start = Math.max(0, Math.min(t0, t1));
     let end = Math.min(ne.e.length, Math.max(t0, t1));
     if (end - start < 0.3) continue;
+    const type = isDoor ? 'door' : 'window';
+    const dupOp = room.openings.find((o) => o.edge === ne.k && o.type === type && Math.min(o.offset + o.width, end) - Math.max(o.offset, start) > -0.1);
+    if (dupOp) {
+      // to samo przejście zaznaczone dwa razy — łączymy
+      const s0 = Math.min(dupOp.offset, start), e0 = Math.max(dupOp.offset + dupOp.width, end);
+      dupOp.offset = s0;
+      dupOp.width = e0 - s0;
+      continue;
+    }
     const y0 = Math.max(0, seg.y0);
     room.openings.push(createOpening({
-      type: isDoor ? 'door' : 'window',
+      type,
       edge: ne.k,
       offset: start,
       width: end - start,
       height: Math.max(0.3, seg.y1 - (isDoor && y0 < 0.2 ? 0 : y0)),
       sill: isDoor && y0 < 0.2 ? 0 : y0,
     }));
-    if (isDoor) stats.doors++; else stats.windows++;
   }
+  stats.doors = room.openings.filter((o) => o.type === 'door').length;
+  stats.windows = room.openings.filter((o) => o.type === 'window').length;
 
-  // 6. Meble z siatek (bryły ograniczające) + globalna siatka
+  const tooBig = (r, h) => r.w * r.d > 0.5 * roomArea || (r.w > 0.85 * maxExtent && h > 0.8 * room.height);
+
+  // 6. Meble z siatek (bryły ograniczające) + siatka trójkątów (tylko ten pokój)
+  const meshParts = [];
   for (const m of meshes) {
     if (!m.vertices || m.vertices.length < 9) continue;
-    if (m.label === 'global mesh') {
-      if (opts.keepGlobalMesh !== false) {
-        room.scan.mesh = { positions: meshPointsInRoom(m, toRoom2), indices: m.indices ? new Uint32Array(m.indices) : new Uint32Array(0) };
-      }
+    if (isGlobalMeshLike(m)) {
+      if (opts.keepGlobalMesh !== false) meshParts.push({ positions: meshPointsInRoom(m, toRoom2), indices: m.indices ? new Uint32Array(m.indices) : null });
       continue;
     }
     if (isStructureLabel(m.label)) continue;
@@ -253,6 +318,7 @@ export function convertScene(scanData, opts = {}) {
     }
     const r = minAreaRect(xz);
     if (r.w < 0.05 || y1 - y0 < 0.03) continue;
+    if (!inRoom([r.x, r.z], outline) || tooBig(r, y1 - y0)) { stats.skipped++; continue; }
     const type = labelToType(m.label);
     const f = createFurniture({
       type,
@@ -264,22 +330,24 @@ export function convertScene(scanData, opts = {}) {
     f.scanned = snapshotScanned(f);
     room.furniture.push(f);
   }
+  if (meshParts.length) room.scan.mesh = cropMeshToRoom(meshParts, outline, 0.4);
 
   // 7. Meble tylko z płaszczyzn (np. blat stołu bez bryły) — bez duplikatów
   for (const p of planes) {
-    if (isStructureLabel(p.label) || !p.polygon || p.polygon.length < 3) continue;
+    if (isStructureLabel(p.label) || ORIENTATION_LABELS.has(p.label) || !p.polygon || p.polygon.length < 3) continue;
     const pts3 = planePointsInRoom(p, toRoom2);
     const xz = pts3.map((q) => [q[0], q[2]]);
     const horizontal = planeNormalY(p, toRoom2) > 0.8;
     const r = minAreaRect(xz);
     const center = [r.x, r.z];
+    if (!inRoom(center, outline)) continue;
     const dup = room.furniture.some((f) => furnitureFootprints({ ...f, w: f.w + 0.2, d: f.d + 0.2 }).some((part) => pointInPolygon(center, part)));
     if (dup) continue;
     const type = labelToType(p.label);
     let f;
     if (horizontal) {
       const top = pts3.reduce((s, q) => s + q[1], 0) / pts3.length;
-      if (top < 0.1 || r.w < 0.1) continue;
+      if (top < 0.1 || r.w < 0.1 || tooBig(r, top) || top > room.height - 0.15) continue;
       f = createFurniture({ type, x: r.x, z: r.z, y: 0, rot: r.rot, w: r.w, d: Math.max(0.1, r.d), h: top, verified: false, sourceLabel: p.label });
     } else if (type === 'screen') {
       const seg = verticalPlaneSegment(pts3);
@@ -294,4 +362,55 @@ export function convertScene(scanData, opts = {}) {
 
   stats.furniture = room.furniture.length;
   return { room, stats, frame };
+}
+
+/** Łączy siatki i zostawia trójkąty, których środek leży w pokoju (z marginesem). */
+function cropMeshToRoom(parts, outline, margin) {
+  const pos = [], idx = [];
+  for (const part of parts) {
+    const P = part.positions;
+    const nV = P.length / 3;
+    const I = part.indices && part.indices.length ? part.indices : Uint32Array.from({ length: nV }, (_, i) => i);
+    const remap = new Map();
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const a = I[t], b = I[t + 1], c = I[t + 2];
+      const cx = (P[a * 3] + P[b * 3] + P[c * 3]) / 3, cz = (P[a * 3 + 2] + P[b * 3 + 2] + P[c * 3 + 2]) / 3;
+      if (!inRoom([cx, cz], outline, margin)) continue;
+      for (const v of [a, b, c]) {
+        let n = remap.get(v);
+        if (n === undefined) { n = pos.length / 3; remap.set(v, n); pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); }
+        idx.push(n);
+      }
+    }
+  }
+  return { positions: new Float32Array(pos), indices: new Uint32Array(idx) };
+}
+
+/** Poza 2D (x, z, rot) z macierzy 4x4 — konwencja obrotu jak w geometry.js. */
+export function pose2DFromMatrix(m) {
+  return { x: m[12], z: m[14], rot: -Math.atan2(m[2], m[0]) };
+}
+
+function compose2D(a, b) {
+  const c = Math.cos(a.rot), s = Math.sin(a.rot);
+  return { x: a.x + b.x * c + b.z * s, z: a.z - b.x * s + b.z * c, rot: a.rot + b.rot };
+}
+
+function invert2D(a) {
+  const c = Math.cos(-a.rot), s = Math.sin(-a.rot);
+  return { x: -(a.x * c + a.z * s), z: -(-a.x * s + a.z * c), rot: -a.rot };
+}
+
+/**
+ * Wszystkie pokoje ze Space Setup naraz (każda podłoga = pokój), ułożone względem siebie
+ * tak jak w rzeczywistości. Transformacje są względem pierwszego pokoju.
+ */
+export function convertAllRooms(scanData, opts = {}) {
+  const floors = listFloors(scanData).filter((f) => f.area > 0.8);
+  const results = floors.map((f, i) => convertScene(scanData, { ...opts, floorIndex: f.index, name: opts.names ? opts.names[i] : `Pokój ${(opts.startNumber || 1) + i}` }));
+  if (!results.length) return [];
+  const p0 = pose2DFromMatrix(results[0].frame);
+  const inv0 = invert2D(p0);
+  for (const r of results) r.room.transform = compose2D(inv0, pose2DFromMatrix(r.frame));
+  return results;
 }
