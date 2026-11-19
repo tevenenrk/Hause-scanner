@@ -6,6 +6,7 @@ import { LiveSceneOverlay } from './liveOverlay.js';
 import { captureScene, sceneStats, floorPlanes } from './sceneCapture.js';
 import { convertScene, convertAllRooms, roomFrameFromFloor, listFloors, floorAtPoint } from '../scanConvert.js';
 import { applyScanShape, applyBoxShape } from '../scanShape.js';
+import { checkRoom, verdictText } from '../scanCheck.js';
 import { ApartmentView } from '../roomView.js';
 import {
   computeConflicts, snapToWalls, normalizeAngle, rad, polygonCentroid, alignRotationToNearestWall, worldToRoom, roomToWorld,
@@ -158,6 +159,9 @@ export class XRApp {
     this.root.add(this.view.group);
     this.labels = new THREE.Group();
     this.root.add(this.labels);
+    this.holesGroup = new THREE.Group(); // czerwone kafelki: niezeskanowane miejsca
+    this.root.add(this.holesGroup);
+    this.buildGuide();
 
     this.panel = new Panel3D({ width: 0.4 });
     this.panel.onAction = (id) => this.onPanelAction(id);
@@ -307,6 +311,7 @@ export class XRApp {
     if (this.state === 'scan' && this.frameCount % 45 === 0) this.updatePanel();
 
     this.updateGrab(dt);
+    this.updateGuide(now / 1000);
     this.updateRays();
     this.renderer.render(this.scene, this.camera);
   }
@@ -420,6 +425,9 @@ export class XRApp {
       rooms: () => { this.state = 'rooms'; this.updatePanel(); },
       goRoom: () => { this.state = 'edit'; if (this.dollhouse) this.dollhouse = false; this.enterWalk(arg); },
       exitWalk: () => this.exitWalk(),
+      check: () => this.openCheck(),
+      issue: () => this.gotoIssue(+arg),
+      checkBack: () => { this.state = this.checkReturn || 'edit'; if (this.state !== 'scan') this.holesGroup.clear(); this.refresh(); },
       look: () => { this.state = 'look'; this.updatePanel(); },
       lookWall: () => { this.lookFor().wallStyle = arg; this.saveLook(); },
       lookWallOp: () => { const l = this.lookFor(); l.wallOpacity = parseFloat(arg); if (l.wallStyle !== 'transparent') l.wallStyle = 'transparent'; this.saveLook(); },
@@ -464,6 +472,18 @@ export class XRApp {
 
   buildPage() {
     const st = this.state;
+    if (st === 'check') {
+      const res = this.checkRes;
+      if (!res) return { title: 'Kontrola skanu', lines: ['Brak danych do sprawdzenia.'], rows: [[{ id: 'checkBack', label: '← Wróć' }]] };
+      const icon = { error: '✖', warn: '⚠', info: 'ℹ' };
+      const rows = res.issues.slice(0, 8).map((it, i) => [{ id: `issue:${i}`, label: `${icon[it.level]} ${it.text.length > 70 ? it.text.slice(0, 68) + '…' : it.text}`, style: it.level === 'error' ? 'danger' : it.level === 'warn' ? 'active' : 'muted' }]);
+      rows.push([{ id: 'checkBack', label: '← Wróć', style: 'primary' }]);
+      return {
+        title: `Kontrola skanu${this.checkRoomRef ? ' — ' + this.checkRoomRef.name : ''}`,
+        lines: [verdictText(res), res.issues.length > 8 ? `Pokazano 8 z ${res.issues.length} uwag (pełna lista na PC).` : 'Kliknij uwagę o meblu, żeby go wskazać.'],
+        rows,
+      };
+    }
     if (st === 'scan' && !this.scanChoice && this.scanStats && this.scanStats.planes) {
       // w goglach jest już zapisany skan (Space Setup) — użyć go czy skanować od nowa?
       const s = this.scanStats;
@@ -490,6 +510,7 @@ export class XRApp {
       if (!s.planes && performance.now() - this.scanStartTime > 2500) lines.push('Brak danych pokoju. Uruchom konfigurację przestrzeni (Space Setup) i obejdź pokój, zaznaczając meble.');
       else lines.push('Turkusowe trójkąty to siatka ze skanu, żółte to meble ze Space Setup. Tam, gdzie nie ma trójkątów, pokój nie jest zeskanowany: popraw w Space Setup.');
       if ((this.scanFloors || 0) >= 2) lines.push(`Space Setup zawiera ${this.scanFloors} pokoje. ${this.scanHereArea ? 'Podświetlony jest ten, w którym stoisz.' : 'Stań w pokoju, który chcesz zapisać.'}`);
+      if (this.checkRes) lines.push(verdictText(this.checkRes) + (this.checkRes.holes.length ? ' Czerwone kafelki = niezeskanowane miejsca.' : ''));
       if (this.message) lines.push(this.message);
       return {
         title: 'Skan pokoju',
@@ -497,11 +518,11 @@ export class XRApp {
         rows: (this.scanFloors || 0) >= 2
           ? [
             [{ id: 'saveScan', label: `Zapisz pokój, w którym stoję${this.scanHereArea ? ` (${this.scanHereArea.toFixed(1)} m²)` : ''}`, style: 'primary', disabled: !this.scanHereArea }],
-            [{ id: 'saveAll', label: `Zapisz wszystkie pokoje (${this.scanFloors})` }],
+            [{ id: 'saveAll', label: `Zapisz wszystkie pokoje (${this.scanFloors})` }, { id: 'check', label: '✔ Szczegóły kontroli' }],
             [{ id: 'roomCapture', label: '↻ Zeskanuj od nowa' }, { id: 'cancel', label: 'Anuluj', style: 'muted' }],
           ]
           : [
-            [{ id: 'saveScan', label: 'Zapisz pokój', style: 'primary', disabled: !s.planes }],
+            [{ id: 'saveScan', label: 'Zapisz pokój', style: 'primary', disabled: !s.planes }, { id: 'check', label: '✔ Szczegóły kontroli', disabled: !this.checkRes }],
             [{ id: 'roomCapture', label: s.planes ? '↻ Zeskanuj od nowa' : 'Skanuj (Space Setup)' }, { id: 'cancel', label: 'Anuluj', style: 'muted' }],
           ],
       };
@@ -664,7 +685,7 @@ export class XRApp {
       { id: 'hidden', label: `Ukryte (${hiddenCount})`, disabled: !hiddenCount },
     ];
     if (unverCount) variantRow.push({ id: 'verifyAll', label: `Do potwierdzenia (${unverCount})` });
-    const toolRow = [{ id: 'newBox', label: '+ Nowa bryła' }, { id: 'measure', label: '📏 Miarka' }, { id: 'look', label: '👁 Wygląd' }];
+    const toolRow = [{ id: 'newBox', label: '+ Nowa bryła' }, { id: 'measure', label: '📏 Miarka' }, { id: 'look', label: '👁 Wygląd' }, { id: 'check', label: '✔ Kontrola' }];
     if (this.dollhouse) {
       return {
         title: 'Makieta mieszkania',
@@ -738,8 +759,11 @@ export class XRApp {
       const vp = this.headPoint();
       const here = vp ? floorAtPoint(floors, vp) : null;
       this.scanHereArea = here !== null ? floors.find((f) => f.index === here).area : null;
-      const { room, frame: m } = convertScene(data, { keepGlobalMesh: false, viewerPoint: vp });
+      const { room, frame: m } = convertScene(data, { keepGlobalMesh: true, viewerPoint: vp });
       this.previewRoom = room;
+      this.checkRes = checkRoom(room);
+      this.checkRoomRef = room;
+      this.showHoles(room, this.checkRes);
       this.setRootMatrix(new THREE.Matrix4().fromArray(m));
       this.view.setOptions({ showMesh: false, conflicts: new Map(), selectedId: null });
       this.view.rebuild({ rooms: [room] });
@@ -781,6 +805,7 @@ export class XRApp {
 
   /** Wszystkie pokoje ze Space Setup naraz, ułożone względem siebie. */
   doSaveAllRooms(frame) {
+    this.holesGroup.clear();
     const data = captureScene(frame, this.refSpace);
     const n = this.project.rooms.length + 1;
     const results = convertAllRooms(data, { startNumber: n, keepGlobalMesh: true });
@@ -834,6 +859,7 @@ export class XRApp {
   }
 
   doSaveScan(frame) {
+    this.holesGroup.clear();
     const data = captureScene(frame, this.refSpace);
     const n = this.project.rooms.length + 1;
     const { room, stats, frame: m } = convertScene(data, { name: `Pokój ${n}`, keepGlobalMesh: true, viewerPoint: this.headPoint() });
@@ -1137,6 +1163,116 @@ export class XRApp {
     r.xrAlign = { x: na.x + before[0] - after[0], z: na.z + before[1] - after[1], rot: na.rot };
     this.applyAlignment();
     this.commit();
+  }
+
+  // ======================= wskaźnik pytanego mebla =======================
+  buildGuide() {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffd400, depthTest: false, transparent: true, opacity: 0.95 });
+    const arrow = new THREE.Group();
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.12, 20), mat);
+    head.rotation.x = Math.PI; // grot w dół
+    head.position.y = 0.06;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 12), mat);
+    shaft.position.y = 0.2;
+    arrow.add(head, shaft);
+    arrow.traverse((o) => { o.renderOrder = 50; });
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]);
+    const line = new THREE.Line(lineGeo, new THREE.LineDashedMaterial({ color: 0xffd400, dashSize: 0.04, gapSize: 0.03, depthTest: false, transparent: true, opacity: 0.8 }));
+    line.renderOrder = 50;
+    const offGeo = new THREE.ConeGeometry(0.035, 0.11, 16);
+    offGeo.rotateX(Math.PI / 2); // grot wzdłuż +Z (lookAt)
+    const off = new THREE.Mesh(offGeo, mat);
+    off.renderOrder = 51;
+    this.guide = { arrow, line, off, group: new THREE.Group() };
+    this.guide.group.add(arrow, line, off);
+    this.guide.group.visible = false;
+    this.scene.add(this.guide.group);
+  }
+
+  /** Strzałka nad meblem, o który pyta „Co to jest?”, linia od panelu i strzałka kierunku, gdy mebel jest poza wzrokiem. */
+  updateGuide(t) {
+    const g = this.guide;
+    const id = this.selectedId && (this.state === 'verify' || this.state === 'merge' || this.guideId === this.selectedId) ? this.selectedId : null;
+    const obj = id && this.view.furnitureObjects.get(id);
+    if (!obj || !this.head) {
+      if (g.group.visible) { g.group.visible = false; this.view.applyHighlights(); }
+      return;
+    }
+    g.group.visible = true;
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    const top = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);
+    const k = this.dollhouse ? 0.5 : 1;
+    g.arrow.scale.setScalar(k);
+    g.arrow.position.copy(top).add(new THREE.Vector3(0, (0.03 + 0.04 * (1 + Math.sin(t * 5))) * k, 0));
+    // linia od dolnej krawędzi panelu do strzałki
+    const p0 = new THREE.Vector3(0, -0.5, 0).applyMatrix4(this.panel.mesh.matrixWorld);
+    const pos = g.line.geometry.attributes.position;
+    pos.setXYZ(0, p0.x, p0.y, p0.z);
+    pos.setXYZ(1, g.arrow.position.x, g.arrow.position.y + 0.3 * k, g.arrow.position.z);
+    pos.needsUpdate = true;
+    g.line.geometry.computeBoundingSphere();
+    g.line.computeLineDistances();
+    g.line.visible = this.panel.mesh.visible;
+    // strzałka kierunku, gdy mebel jest poza polem widzenia
+    const headPos = new THREE.Vector3().setFromMatrixPosition(this.head);
+    const fwd = new THREE.Vector3(0, 0, -1).transformDirection(this.head);
+    const toT = top.clone().sub(headPos);
+    const outOfView = toT.angleTo(fwd) > rad(32);
+    g.off.visible = outOfView;
+    if (outOfView) {
+      g.off.position.copy(headPos).addScaledVector(fwd, 0.45).add(new THREE.Vector3(0, -0.08, 0));
+      g.off.lookAt(top);
+      g.off.scale.setScalar(1 + 0.15 * Math.sin(t * 6));
+    }
+    // pulsujące podświetlenie bryły
+    const mat = obj.userData.mat;
+    if (mat) { mat.emissive.setHex(0xffd400); mat.emissiveIntensity = 0.25 + 0.25 * (1 + Math.sin(t * 5)) / 2; }
+  }
+
+  // ======================= kontrola skanu =======================
+  showHoles(room, res, inApartment = false) {
+    this.holesGroup.clear();
+    if (!res || !res.holes.length) return;
+    const geo = new THREE.PlaneGeometry(res.cell * 0.9, res.cell * 0.9);
+    geo.rotateX(-Math.PI / 2);
+    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide }), res.holes.length);
+    const m = new THREE.Matrix4();
+    res.holes.forEach((h, i) => {
+      const p = inApartment ? roomToWorld(room, h) : h;
+      m.makeTranslation(p[0], 0.015, p[1]);
+      mesh.setMatrixAt(i, m);
+    });
+    mesh.renderOrder = 5;
+    this.holesGroup.add(mesh);
+  }
+
+  openCheck() {
+    this.checkReturn = this.state === 'check' ? this.checkReturn : this.state;
+    if (this.state !== 'scan') {
+      const room = this.anchorRoom() || this.project.rooms[0];
+      if (room) {
+        this.checkRoomRef = room;
+        this.checkRes = checkRoom(room);
+        this.showHoles(room, this.checkRes, true);
+      }
+    }
+    this.state = 'check';
+    this.updatePanel();
+  }
+
+  gotoIssue(i) {
+    const it = this.checkRes && this.checkRes.issues[i];
+    if (!it) return;
+    if (it.fid && findFurniture(this.project, it.fid)) {
+      this.selectedId = it.fid;
+      this.guideId = it.fid; // strzałka wskaże mebel
+      this.state = 'edit';
+      this.refresh();
+    } else if (it.edge !== undefined) {
+      this.message = 'Ściany i otwory poprawisz najdokładniej na PC (tryb „Ściany”).';
+      this.updatePanel();
+    }
   }
 
   // ======================= wygląd =======================

@@ -16,6 +16,7 @@ import {
 import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from './labels.js';
 import { saveProject } from './store.js';
 import { applyScanShape, applyBoxShape } from './scanShape.js';
+import { checkRoom, verdictText } from './scanCheck.js';
 
 const cm = (m) => Math.round(m * 1000) / 10; // metry -> cm z dokładnością 1 mm
 const fmtCm = (m) => `${Math.round(m * 100)} cm`;
@@ -79,6 +80,7 @@ export class Editor {
       issues: document.getElementById('issues'),
       verify: document.getElementById('verify-card'),
       variants: document.getElementById('variants'),
+      check: document.getElementById('check-card'),
       cameras: document.getElementById('cameras'),
       matchUI: document.getElementById('match-ui'),
       matchPhoto: document.getElementById('match-photo'),
@@ -238,6 +240,70 @@ export class Editor {
     this.updateXRButtons();
     if (!this.running) { this.running = true; this.loop(); }
     this.el.saveStatus.textContent = 'Zapisano';
+    this.checkResults = null;
+    clearTimeout(this.checkTimer);
+    this.checkTimer = setTimeout(() => this.runCheck(), 400);
+  }
+
+  /** Kontrola skanu wszystkich pokoi (liczona na żądanie — pokrycie siatką kosztuje chwilę). */
+  runCheck() {
+    if (!this.project) return;
+    this.checkResults = this.project.rooms.map((room) => ({ room, res: checkRoom(room) }));
+    this.checkStale = false;
+    this.renderCheck();
+    this.updateOverlay();
+  }
+
+  renderCheck() {
+    const el = this.el.check;
+    if (!this.project.rooms.length) { el.hidden = true; return; }
+    el.hidden = false;
+    if (!this.checkResults) {
+      el.innerHTML = '<h3>Kontrola skanu</h3><div class="btns"><button data-check-run>✔ Sprawdź skan</button></div>';
+      return;
+    }
+    if (this.checkResults.length !== this.project.rooms.length || this.checkResults.some(({ room }) => !this.project.rooms.includes(room))) {
+      // pokoje się zmieniły (np. powrót ze skanu) — sprawdź od nowa
+      clearTimeout(this.checkTimer);
+      this.checkTimer = setTimeout(() => this.runCheck(), 50);
+    }
+    const icon = { error: '✖', warn: '⚠', info: 'ℹ' };
+    const blocks = this.checkResults.map(({ room, res }, ri) => `
+      <div class="verdict ${res.verdict}">${esc(room.name)}: ${esc(verdictText(res))}</div>
+      ${res.issues.map((it, ii) => `<div class="issue ${it.level === 'error' ? '' : it.level}" data-issue="${ri}:${ii}">${icon[it.level]} ${esc(it.text)}</div>`).join('')}`).join('');
+    el.innerHTML = `<h3>Kontrola skanu</h3>${blocks}
+      <div class="btns">
+        <button data-check-run>↻ Sprawdź ponownie</button>
+        <label><input type="checkbox" data-check-holes ${this.showHoles ? 'checked' : ''}> pokaż niezeskanowane miejsca</label>
+        ${this.checkStale ? '<span class="stale">(po zmianach — sprawdź ponownie)</span>' : ''}
+      </div>`;
+  }
+
+  onCheckClick(e) {
+    if (e.target.closest('[data-check-run]')) { this.runCheck(); return; }
+    const h = e.target.closest('[data-check-holes]');
+    if (h) { this.showHoles = h.checked; this.updateOverlay(); return; }
+    const it = e.target.closest('[data-issue]');
+    if (!it) return;
+    const [ri, ii] = it.dataset.issue.split(':').map(Number);
+    const { room, res } = this.checkResults[ri];
+    const issue = res.issues[ii];
+    if (issue.fid && findFurniture(this.project, issue.fid)) {
+      this.setMode('furniture');
+      this.guideId = issue.fid;
+      this.select({ kind: 'furniture', id: issue.fid });
+      const obj = this.view3d.furnitureObjects.get(issue.fid);
+      if (obj) this.focusOn(obj.getWorldPosition(new THREE.Vector3()));
+    } else if (issue.edge !== undefined) {
+      this.setMode('walls');
+      this.select({ kind: 'edge', roomId: room.id, index: issue.edge });
+    } else if (issue.point) {
+      this.showHoles = true;
+      const w = roomToWorld(room, issue.point);
+      this.focusOn(new THREE.Vector3(w[0], 0, w[1]));
+      this.renderCheck();
+      this.updateOverlay();
+    }
   }
 
   close() {
@@ -276,7 +342,7 @@ export class Editor {
 
   /** Zatwierdza zmianę: historia + zapis + odświeżenie. */
   commit() {
-    if (this.history.commit(this.project)) this.scheduleSave();
+    if (this.history.commit(this.project)) { this.scheduleSave(); if (this.checkResults) this.checkStale = true; }
     this.refresh();
   }
 
@@ -509,12 +575,31 @@ export class Editor {
         });
       }
     }
+    // niezeskanowane miejsca (kontrola skanu)
+    if (this.showHoles && this.checkResults) {
+      for (const { room, res } of this.checkResults) {
+        if (!res.holes.length || !this.project.rooms.includes(room)) continue;
+        const g = this.roomOverlayGroup(room);
+        const geo = new THREE.PlaneGeometry(res.cell * 0.9, res.cell * 0.9);
+        geo.rotateX(-Math.PI / 2);
+        const im = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.5, depthWrite: false }), res.holes.length);
+        const m = new THREE.Matrix4();
+        res.holes.forEach((h, i) => { m.makeTranslation(h[0], 0.02, h[1]); im.setMatrixAt(i, m); });
+        im.renderOrder = 8;
+        g.add(im);
+      }
+    }
     // zaznaczony mebel: odległości do przeszkód
     const s = this.selection;
     if (s && s.kind === 'furniture' && this.mode === 'furniture') {
       const found = findFurniture(this.project, s.id);
       if (found && !found.f.hidden) {
         const g = this.roomOverlayGroup(found.room);
+        // strzałka: o który mebel pyta „Co to jest?” (albo wskazany z kontroli skanu)
+        if (!found.f.verified || this.guideId === found.f.id || this.mergePick) {
+          const top = new THREE.Vector3(found.f.x, (found.f.y || 0) + found.f.h + 0.05, found.f.z);
+          this.label('', 'guide-arrow', top, g).element.innerHTML = '<span>⬇</span>';
+        }
         for (const c of computeClearances(found.room, found.f)) {
           const y = Math.min(found.f.h, 0.3) + (found.f.y || 0);
           const a = new THREE.Vector3(c.from[0], y, c.from[1]), b = new THREE.Vector3(c.to[0], y, c.to[1]);
@@ -1197,6 +1282,8 @@ export class Editor {
       if (it) { this.setMode('furniture'); this.select({ kind: 'furniture', id: it.dataset.fid }); }
     });
     this.el.verify.addEventListener('click', (e) => this.onVerifyClick(e));
+    this.el.check.addEventListener('click', (e) => this.onCheckClick(e));
+    this.el.check.addEventListener('change', (e) => this.onCheckClick(e));
     // kamery ze zdjęciami
     this.el.cameras.addEventListener('click', (e) => {
       if (e.target.closest('[data-cam-add]')) { $('file-campic').click(); return; }
@@ -1311,6 +1398,7 @@ export class Editor {
   }
 
   renderPanels() {
+    if (this.el.check && this.project) this.renderCheck();
     this.renderVariants();
     this.renderCameras();
     this.renderRoomList();

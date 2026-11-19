@@ -234,3 +234,15 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.85); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: zoom-out; }
 .lightbox img { max-width: 94vw; max-height: 86vh; border-radius: 6px; }
 .lightbox .hint { color: #ccc; }
+
+.label3d.guide-arrow { background: none; border: none; font-size: 34px; color: #ffd400; text-shadow: 0 0 4px #000, 0 0 2px #000; }
+.label3d.guide-arrow span { display: inline-block; animation: guideBounce 0.8s ease-in-out infinite; }
+@keyframes guideBounce { 0%, 100% { transform: translateY(-60%); } 50% { transform: translateY(-110%); } }
+.check .verdict { font-weight: 600; margin-bottom: 4px; }
+.check .verdict.ok { color: var(--ok); }
+.check .verdict.warn { color: var(--warn); }
+.check .verdict.error { color: var(--danger); }
+.check .issue.info { border-left-color: var(--accent); }
+.check .btns { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
+.check .btns button { font-size: 12px; padding: 3px 7px; }
+.check .stale { font-size: 11px; color: var(--muted); }

@@ -27,6 +27,7 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - [x] Uchwyty zmiany wymiarów w goglach, ±10 cm, miarka w goglach, „Nowa bryła”.
 - [x] Spacer wirtualny także w MR, teleport jak w grach VR.
 - [x] Zdjęcia i link przy meblach, kamery zdjęć z dopasowaniem widoku, paczka ZIP dla AI (zdjęcie + render z tej samej kamery).
+- [x] Strzałka wskazująca pytany mebel (gogle i PC) i kontrola kompletności skanu (dziury, brakujące ściany, podejrzane meble).
 - [ ] Łączenie drzwi także w goglach (na razie na PC).
 
 ## Etap 2 — całe mieszkanie

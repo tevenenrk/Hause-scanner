@@ -258,6 +258,24 @@ export function convertScene(scanData, opts = {}) {
       floorArea: roomArea,
       floorPerimeter: polygonPerimeter(outline),
       hadFloorPlane: !!floor,
+      hadCeiling: !!ceil,
+      wallPlanes: walls.length,
+      // ile procent długości każdej ściany obrysu pokrywają płaszczyzny ścian ze skanu
+      edgeWallCoverage: outline.map((pa, k) => {
+        const pb = outline[(k + 1) % outline.length];
+        const L = dist(pa, pb);
+        if (L < 0.01) return 1;
+        const ints = [];
+        for (const w of walls) {
+          if (Math.max(distPointSegment(w.a, pa, pb), distPointSegment(w.b, pa, pb)) > 0.3) continue;
+          const t0 = projectT(w.a, pa, pb), t1 = projectT(w.b, pa, pb);
+          ints.push([Math.max(0, Math.min(t0, t1)), Math.min(1, Math.max(t0, t1))]);
+        }
+        ints.sort((x, y) => x[0] - y[0]);
+        let covered = 0, cur = 0;
+        for (const [s0, e0] of ints) { if (e0 <= cur) continue; covered += e0 - Math.max(s0, cur); cur = e0; }
+        return Math.round(covered * 100) / 100;
+      }),
     },
   });
 

@@ -9,6 +9,8 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 **Skan (na Queście)**
 - odczytuje pokój z systemowej **Konfiguracji przestrzeni (Space Setup)**: podłogę, ściany, sufit, drzwi, okna i meble,
 - na starcie pyta: **użyć skanu zapisanego w goglach** czy **zeskanować od nowa** (Space Setup jest ustawieniem Questa wspólnym dla wszystkich projektów, więc bez tego nowy projekt dostawał stary skan),
+- **kontrola skanu**: jeszcze przed zapisem sprawdza, czy skan jest kompletny i sensowny. Wykrywa niezeskanowane miejsca (czerwone kafelki na podłodze), brak podłogi, sufitu i ścian, ściany obrysu bez zeskanowanej ściany, dziwną wysokość lub powierzchnię, brak drzwi i zbyt szerokie drzwi, meble wiszące w powietrzu, wystające za ścianę, zdublowane, malutkie (szum) albo wielkości pokoju. Kliknięcie uwagi o meblu wskazuje go strzałką. Ta sama kontrola jest w goglach („✔ Kontrola”) i na PC (karta „Kontrola skanu”),
+- przy „Co to jest?” nad pytanym meblem **podskakuje strzałka**, od panelu biegnie do niego linia, a bryła pulsuje. Gdy mebel jest poza wzrokiem, przed oczami pojawia się strzałka kierunku. Na PC też jest strzałka,
 - **pokazuje na żywo trójkąty skanu** (siatkę Space Setup), płaszczyzny i bryły mebli. Tam, gdzie nie ma trójkątów, pokój nie jest zeskanowany,
 - działa w trybie **bez granicy** (przestrzeń `unbounded` przeglądarki Questa), więc możesz chodzić po mieszkaniu. Gdy gogle go nie udostępnią, aplikacja wraca do zwykłego trybu z granicą,
 - zamienia skan na prosty model: obrys pokoju, wysokość, otwory i meble jako bryłki,
