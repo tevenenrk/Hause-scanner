@@ -96,6 +96,7 @@
             <button id="btn-export-json">Eksport: projekt (JSON)</button>
             <button id="btn-export-json-light">Eksport: JSON bez siatki skanu</button>
             <button id="btn-export-glb">Eksport: model 3D (GLB)</button>
+            <button id="btn-export-ai">Eksport: paczka dla AI (ZIP: zdjęcia, kamery, rzuty, opis)</button>
             <label class="button">Import JSON (zastąp projekt)…<input id="file-import-editor" type="file" accept=".json,application/json" hidden></label>
           </div>
         </div>
@@ -110,12 +111,23 @@
     <aside class="sidebar left" id="sidebar-left">
       <div id="verify-card" class="card verify" hidden></div>
       <div id="variants" class="card variants"></div>
+      <div id="cameras" class="card cameras"></div>
+      <input id="file-photo" type="file" accept="image/*" multiple hidden>
+      <input id="file-campic" type="file" accept="image/*" hidden>
       <div id="room-list"></div>
       <div id="issues"></div>
     </aside>
 
     <div class="viewport" id="viewport">
       <div id="viewport-hint" class="viewport-hint"></div>
+      <img id="match-photo" class="match-photo" alt="" hidden>
+      <div id="match-ui" class="match-ui" hidden>
+        <b>Dopasuj widok do zdjęcia</b>
+        <span class="hint">Lewy przycisk: obrót, prawy: przesuwanie, kółko: przybliżenie. Ustaw tak, żeby makieta pokryła się ze zdjęciem.</span>
+        <label>Zdjęcie <input type="range" id="match-opacity" min="0" max="1" step="0.05" value="0.5"></label>
+        <label>Kąt widzenia <input type="range" id="match-fov" min="20" max="110" step="1" value="55"> <span id="match-fov-val">55°</span></label>
+        <div class="btns"><button class="primary" id="match-save">✓ Zapisz pozycję kamery</button><button id="match-cancel">Anuluj</button></div>
+      </div>
     </div>
 
     <aside class="sidebar right" id="sidebar-right">
@@ -124,6 +136,7 @@
   </main>
 
   <div id="toast" class="toast" hidden></div>
+  <div id="lightbox" class="lightbox" hidden><img alt=""><span class="hint">Kliknij, aby zamknąć</span></div>
 
   <script type="module" src="src/main.js"></script>
 </body>

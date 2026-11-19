@@ -50,11 +50,15 @@ export function createFurniture(props = {}) {
     notes: props.notes || '',
     scanned: props.scanned || null,
     sourceLabel: props.sourceLabel || null,
+    photos: Array.isArray(props.photos) ? props.photos.slice() : [],
+    link: props.link || '',
   };
   if (f.shape === 'L') {
     f.aw = props.aw ?? Math.min(0.9, f.w / 2);
     f.ad = props.ad ?? Math.min(0.9, f.d / 2);
   }
+  if (props.display) f.display = props.display;
+  if (props.fromScan) f.fromScan = true;
   if (f.shape === 'compound') {
     f.parts = (props.parts || []).map((p) => ({ ...p }));
     if (!f.parts.length) f.shape = 'box';
@@ -249,6 +253,42 @@ export function deleteVariant(project, id) {
   return true;
 }
 
+// ---------- zdjęcia i kamery ----------
+/** Dodaje zdjęcie (data URL) do wspólnej bazy projektu. Zwraca id. */
+export function addMedia(project, data, meta = {}) {
+  if (!project.media) project.media = {};
+  const id = uid('img');
+  project.media[id] = { data, name: meta.name || 'zdjecie.jpg', w: meta.w || 0, h: meta.h || 0, addedAt: new Date().toISOString() };
+  return id;
+}
+
+/** Kamera = miejsce i kierunek, z którego zrobiono zdjęcie (układ mieszkania, metry). */
+export function createCamera(props = {}) {
+  return {
+    id: uid('cam'),
+    name: props.name || 'Zdjęcie',
+    mediaId: props.mediaId || null,
+    pos: props.pos || [0, 1.5, 0],
+    target: props.target || [0, 1.2, -2],
+    fov: props.fov || 55,
+    aspect: props.aspect || 4 / 3,
+    notes: props.notes || '',
+  };
+}
+
+/** Usuwa zdjęcia, do których nic się już nie odwołuje (wszystkie wersje układu i kamery). */
+export function pruneMedia(project) {
+  if (!project.media) return 0;
+  const used = new Set();
+  const scanF = (list) => (list || []).forEach((f) => (f.photos || []).forEach((id) => used.add(id)));
+  project.rooms.forEach((r) => scanF(r.furniture));
+  (project.variants || []).forEach((v) => Object.values(v.furniture || {}).forEach(scanF));
+  (project.cameras || []).forEach((c) => c.mediaId && used.add(c.mediaId));
+  let n = 0;
+  for (const id of Object.keys(project.media)) if (!used.has(id)) { delete project.media[id]; n++; }
+  return n;
+}
+
 // ---------- łączenie pokoi przez drzwi ----------
 function rotVec(v, rot) {
   const c = Math.cos(rot), s = Math.sin(rot);
@@ -354,7 +394,7 @@ export function projectFromJSON(obj) {
 // ---------- historia (cofnij / ponów) ----------
 // Migawki bez siatek skanu (są duże i nie zmieniają się podczas edycji).
 function snapshot(project) {
-  return JSON.stringify(project, (k, v) => (k === 'mesh' ? undefined : v));
+  return JSON.stringify(project, (k, v) => (k === 'mesh' || k === 'media' ? undefined : v));
 }
 
 export class History {
@@ -389,6 +429,7 @@ export class History {
     // przywróć siatki skanu z bieżącego projektu
     const meshes = new Map(project.rooms.map((r) => [r.id, r.scan && r.scan.mesh]));
     for (const r of restored.rooms) if (meshes.get(r.id)) r.scan.mesh = meshes.get(r.id);
+    restored.media = project.media || {}; // zdjęcia nie są cofane (duże dane)
     return restored;
   }
 }

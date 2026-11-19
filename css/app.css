@@ -213,3 +213,24 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .variants select { width: 100%; margin: 4px 0; }
 .variants .btns { display: flex; flex-wrap: wrap; gap: 4px; }
 .variants .btns button { font-size: 12px; padding: 3px 7px; }
+
+.cameras .cam-item { display: flex; align-items: center; gap: 6px; padding: 3px; border-radius: 6px; cursor: pointer; }
+.cameras .cam-item:hover { background: var(--hover); }
+.cameras .cam-item.selected { background: var(--accent); color: var(--accent-text); }
+.cameras img, .photos img { width: 48px; height: 36px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
+.cameras .btns { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.cameras .btns button { font-size: 12px; padding: 3px 7px; }
+.photos { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.photos .ph { position: relative; }
+.photos .ph img { width: 76px; height: 57px; cursor: zoom-in; }
+.photos .ph button { position: absolute; top: -6px; right: -6px; padding: 0 5px; font-size: 11px; border-radius: 10px; }
+.props .big-photo { width: 100%; border-radius: 6px; cursor: zoom-in; border: 1px solid var(--line); }
+.label3d.camera { background: #ff2e88; color: #fff; }
+.match-photo { position: absolute; z-index: 4; pointer-events: none; opacity: 0.5; object-fit: fill; }
+.match-ui { position: absolute; z-index: 6; top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0,0,0,.2); }
+.match-ui label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.match-ui .btns { display: flex; gap: 6px; margin-left: auto; }
+.lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.85); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: zoom-out; }
+.lightbox img { max-width: 94vw; max-height: 86vh; border-radius: 6px; }
+.lightbox .hint { color: #ccc; }

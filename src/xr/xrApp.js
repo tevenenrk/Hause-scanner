@@ -9,7 +9,7 @@ import { applyScanShape, applyBoxShape } from '../scanShape.js';
 import { ApartmentView } from '../roomView.js';
 import {
   computeConflicts, snapToWalls, normalizeAngle, rad, polygonCentroid, alignRotationToNearestWall, worldToRoom, roomToWorld,
-  polygonArea, roomContainsWorldPoint,
+  polygonArea, roomContainsWorldPoint, localToWorld,
 } from '../geometry.js';
 import {
   History, createFurniture, findFurniture, uid, mergeFurniture, splitFurniture, resizeFurniture,
@@ -301,7 +301,7 @@ export class XRApp {
     }
     if (this.state === 'scan') this.updateScan(frame, now);
     if (!this.aligned && this.state !== 'scan') this.tryAlign(frame);
-    const liveOn = !this.isVR && (this.state === 'scan' || (this.showMesh && !this.dollhouse));
+    const liveOn = !this.isVR && (this.state === 'scan' || (this.showMesh && !this.dollhouse && !this.walking));
     this.live.visible = liveOn;
     if (liveOn) this.live.update(frame, this.refSpace);
     if (this.state === 'scan' && this.frameCount % 45 === 0) this.updatePanel();
@@ -383,6 +383,8 @@ export class XRApp {
       },
       shapeBox: () => { const s = this.sel(); if (s) { applyBoxShape(s.f); this.shapeMsg = 'Zwykły prostopadłościan.'; this.commit(); } },
       roomCapture: () => this.startRoomCapture(),
+      scanUseSaved: () => { this.scanChoice = 'saved'; this.updatePanel(); },
+      scanNew: () => { this.scanChoice = 'new'; this.startRoomCapture(); this.updatePanel(); },
       exit: () => this.exitAndSave(),
       cancel: () => this.end(),
       vtype: () => this.verifyAs(arg),
@@ -417,6 +419,17 @@ export class XRApp {
       verifyAll: () => this.nextVerify(),
       rooms: () => { this.state = 'rooms'; this.updatePanel(); },
       goRoom: () => { this.state = 'edit'; if (this.dollhouse) this.dollhouse = false; this.enterWalk(arg); },
+      exitWalk: () => this.exitWalk(),
+      look: () => { this.state = 'look'; this.updatePanel(); },
+      lookWall: () => { this.lookFor().wallStyle = arg; this.saveLook(); },
+      lookWallOp: () => { const l = this.lookFor(); l.wallOpacity = parseFloat(arg); if (l.wallStyle !== 'transparent') l.wallStyle = 'transparent'; this.saveLook(); },
+      lookFurn: () => { this.lookFor().furnStyle = arg; this.saveLook(); },
+      lookFurnOp: () => { const l = this.lookFor(); l.furnOpacity = parseFloat(arg); l.furnStyle = 'solid'; this.saveLook(); },
+      lookFloor: () => { const l = this.lookFor(); l.floor = !l.floor; this.saveLook(); },
+      display: () => { const s = this.sel(); if (s) { s.f.display = arg === 'normal' ? undefined : arg; this.commit(); } },
+      measure: () => { this.state = 'measure'; this.selectedId = null; this.refresh(); },
+      measureClear: () => { this.measures = []; this.refresh(); },
+      newBox: () => this.addTemplate(TEMPLATES.find((t) => t.key === 'box')),
       add: () => { this.state = 'add'; this.updatePanel(); },
       addTpl: () => this.addTemplate(TEMPLATES[+arg]),
       align: () => { this.state = 'align'; this.selectedId = null; this.refresh(); },
@@ -451,6 +464,22 @@ export class XRApp {
 
   buildPage() {
     const st = this.state;
+    if (st === 'scan' && !this.scanChoice && this.scanStats && this.scanStats.planes) {
+      // w goglach jest już zapisany skan (Space Setup) — użyć go czy skanować od nowa?
+      const s = this.scanStats;
+      return {
+        title: 'Skan pokoju',
+        lines: [
+          `Gogle mają już zapisany skan (Space Setup): podłogi ${s.floors}, ściany ${s.walls}, meble ${s.furniture}. Widzisz go teraz jako trójkąty i bryły.`,
+          'Możesz go użyć albo zeskanować pomieszczenie od nowa. Nowy skan zastąpi ten zapisany w goglach (to ustawienie systemowe Questa, wspólne dla wszystkich projektów).',
+        ],
+        rows: [
+          [{ id: 'scanUseSaved', label: 'Użyj zapisanego skanu' }],
+          [{ id: 'scanNew', label: '↻ Zeskanuj od nowa', style: 'primary' }],
+          [{ id: 'cancel', label: 'Anuluj', style: 'muted' }],
+        ],
+      };
+    }
     if (st === 'scan') {
       const s = this.scanStats || { planes: 0, meshes: 0, floors: 0, walls: 0, furniture: 0 };
       const enabled = (this.session && this.session.enabledFeatures) || [];
@@ -469,11 +498,11 @@ export class XRApp {
           ? [
             [{ id: 'saveScan', label: `Zapisz pokój, w którym stoję${this.scanHereArea ? ` (${this.scanHereArea.toFixed(1)} m²)` : ''}`, style: 'primary', disabled: !this.scanHereArea }],
             [{ id: 'saveAll', label: `Zapisz wszystkie pokoje (${this.scanFloors})` }],
-            [{ id: 'roomCapture', label: 'Space Setup (skanuj)' }, { id: 'cancel', label: 'Anuluj', style: 'muted' }],
+            [{ id: 'roomCapture', label: '↻ Zeskanuj od nowa' }, { id: 'cancel', label: 'Anuluj', style: 'muted' }],
           ]
           : [
             [{ id: 'saveScan', label: 'Zapisz pokój', style: 'primary', disabled: !s.planes }],
-            [{ id: 'roomCapture', label: 'Space Setup (skanuj)' }, { id: 'cancel', label: 'Anuluj', style: 'muted' }],
+            [{ id: 'roomCapture', label: s.planes ? '↻ Zeskanuj od nowa' : 'Skanuj (Space Setup)' }, { id: 'cancel', label: 'Anuluj', style: 'muted' }],
           ],
       };
     }
@@ -524,6 +553,33 @@ export class XRApp {
         title: `Scal: ${found.f.name}`,
         lines: ['Wskaż spustem drugą bryłę, która jest częścią tego samego mebla. Obie bryły połączą się w jeden mebel o złożonym kształcie (suma brył) i będą się przesuwać razem.'],
         rows: [[{ id: 'back', label: 'Anuluj', style: 'muted' }]],
+      };
+    }
+    if (st === 'look') {
+      const l = this.lookFor();
+      const on = (c) => (c ? 'active' : undefined);
+      return {
+        title: `Wygląd ${this.dollhouse || this.walking ? 'makiety' : 'w pokoju (MR)'}`,
+        lines: ['Ściany i meble: pełne, półprzezroczyste albo tylko krawędzie. Pojedynczy mebel zmienisz w jego panelu (Wygląd).'],
+        rows: [
+          [{ id: 'lookWall:off', label: 'Ściany: wył.', style: on(l.wallStyle === 'off') }, { id: 'lookWall:edges', label: 'Krawędzie', style: on(l.wallStyle === 'edges') }, { id: 'lookWall:transparent', label: 'Półprzezr.', style: on(l.wallStyle === 'transparent') }, { id: 'lookWall:solid', label: 'Pełne', style: on(l.wallStyle === 'solid') }],
+          [0.1, 0.25, 0.5, 0.75].map((v) => ({ id: `lookWallOp:${v}`, label: `Krycie ścian ${Math.round(v * 100)}%`, style: on(l.wallStyle === 'transparent' && Math.abs(l.wallOpacity - v) < 0.01) })),
+          [{ id: 'lookFurn:solid', label: 'Meble: bryły', style: on(l.furnStyle === 'solid') }, { id: 'lookFurn:edges', label: 'Meble: krawędzie', style: on(l.furnStyle === 'edges') }],
+          [1, 0.7, 0.4, 0.2].map((v) => ({ id: `lookFurnOp:${v}`, label: `Krycie mebli ${Math.round(v * 100)}%`, style: on(l.furnStyle === 'solid' && Math.abs(l.furnOpacity - v) < 0.01) })),
+          [{ id: 'lookFloor', label: l.floor ? 'Podłoga: wł.' : 'Podłoga: wył.', style: on(l.floor) }, { id: 'back', label: '← Wróć', style: 'primary' }],
+        ],
+      };
+    }
+    if (st === 'measure') {
+      const m = this.measures || [];
+      const last = m.length >= 2 && m.length % 2 === 0 ? this.measureText(m[m.length - 2], m[m.length - 1]) : null;
+      return {
+        title: '📏 Miarka',
+        lines: [
+          'Wskaż spustem dwa punkty: mebel, ścianę albo podłogę. W makiecie mierzysz w prawdziwej skali.',
+          m.length % 2 === 1 ? 'Wskaż drugi punkt…' : last ? `Ostatni pomiar: ${last}` : '',
+        ].filter(Boolean),
+        rows: [[{ id: 'measureClear', label: 'Wyczyść pomiary' }, { id: 'back', label: 'Gotowe', style: 'primary' }]],
       };
     }
     if (st === 'more' && found) {
@@ -587,13 +643,14 @@ export class XRApp {
       const dimLabel = (k, n) => ({ id: `dim:${k}`, label: n, style: this.activeDim === k ? 'active' : undefined });
       return {
         title: f.name,
-        lines: [`${cmTxt(f.w)} × ${cmTxt(f.d)} × ${cmTxt(f.h)} cm`, confTxt],
+        lines: [`${cmTxt(f.w)} × ${cmTxt(f.d)} × ${cmTxt(f.h)} cm. Kolorowe kulki na bryle: chwyć spustem i ciągnij, aby zmienić szerokość (czerwona), głębokość (niebieska), wysokość (zielona).`, confTxt],
         rows: [
           [{ id: 'rot:90', label: '⟲ 90°' }, { id: 'rot:15', label: '⟲ 15°' }, { id: 'rot:-15', label: '⟳ 15°' }, { id: 'rot:-90', label: '⟳ 90°' }],
           [dimLabel('w', `Szer. ${cmTxt(f.w)}`), dimLabel('d', `Głęb. ${cmTxt(f.d)}`), dimLabel('h', `Wys. ${cmTxt(f.h)}`)],
-          [{ id: 'dimAdd:-5', label: '−5 cm' }, { id: 'dimAdd:-1', label: '−1 cm' }, { id: 'dimAdd:1', label: '+1 cm' }, { id: 'dimAdd:5', label: '+5 cm' }],
+          [{ id: 'dimAdd:-10', label: '−10' }, { id: 'dimAdd:-5', label: '−5' }, { id: 'dimAdd:-1', label: '−1' }, { id: 'dimAdd:1', label: '+1' }, { id: 'dimAdd:5', label: '+5' }, { id: 'dimAdd:10', label: '+10' }],
           [{ id: 'snap', label: 'Dosuń do ściany' }, { id: 'alignWall', label: 'Równolegle do ściany' }],
           [{ id: 'type', label: 'Zmień typ' }, { id: 'mergeStart', label: 'Scal z…' }, { id: 'dup', label: 'Duplikuj' }],
+          [{ id: 'display:normal', label: 'Wygląd: normalny', style: !f.display ? 'active' : undefined }, { id: 'display:transparent', label: 'Półprzezroczysty', style: f.display === 'transparent' ? 'active' : undefined }, { id: 'display:edges', label: 'Krawędzie', style: f.display === 'edges' ? 'active' : undefined }],
           [{ id: 'more', label: 'Więcej… (kształt, wysokość, kolor)' }],
           [{ id: 'hide', label: 'Ukryj' }, { id: 'del', label: 'Usuń', style: 'danger' }],
           [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'deselect', label: 'Gotowe', style: 'primary' }],
@@ -607,6 +664,7 @@ export class XRApp {
       { id: 'hidden', label: `Ukryte (${hiddenCount})`, disabled: !hiddenCount },
     ];
     if (unverCount) variantRow.push({ id: 'verifyAll', label: `Do potwierdzenia (${unverCount})` });
+    const toolRow = [{ id: 'newBox', label: '+ Nowa bryła' }, { id: 'measure', label: '📏 Miarka' }, { id: 'look', label: '👁 Wygląd' }];
     if (this.dollhouse) {
       return {
         title: 'Makieta mieszkania',
@@ -617,24 +675,28 @@ export class XRApp {
         rows: [
           [{ id: 'dollRot:45', label: '⟲ 45°' }, { id: 'dollRot:-45', label: '⟳ 45°' }, { id: 'dollScale:0.8', label: '− Mniejsza' }, { id: 'dollScale:1.25', label: '+ Większa' }],
           [{ id: 'dollHere', label: 'Przed siebie' }, { id: 'add', label: '+ Dodaj mebel' }],
+          toolRow,
           [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
           variantRow,
           this.isVR
             ? [{ id: 'rooms', label: '🚶 Spacer 1:1 (wybierz pokój)', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }]
-            : [{ id: 'dollExit', label: 'Wróć do 1:1 w pokoju', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }],
+            : [{ id: 'rooms', label: '🚶 Spacer wirtualny' }, { id: 'dollExit', label: 'Wróć do 1:1 w pokoju', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }],
         ],
       };
     }
-    // spacer po gotowym modelu w VR
-    if (this.isVR) {
+    // spacer po makiecie (jak w grach VR)
+    if (this.walking) {
       return {
-        title: 'Spacer po mieszkaniu (VR)',
-        lines: ['Lewa gałka: chodzenie, prawa gałka: obrót o 30°. Spust na meblu: przesuwanie, gałka obraca chwycony mebel. Grip przywołuje panel.'],
+        title: 'Spacer po mieszkaniu',
+        lines: ['Lewa gałka: chodzenie. Prawa gałka: w bok = obrót o 30°, do przodu = celowanie teleportem (puść, aby się przenieść). Spust na meblu: przesuwanie. Grip przywołuje panel.'],
         rows: [
           [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
           [{ id: 'add', label: '+ Dodaj mebel' }, { id: 'rooms', label: 'Przejdź do pokoju' }],
+          toolRow,
           variantRow,
-          [{ id: 'doll', label: '🏠 Makieta' }, { id: 'exit', label: 'Zapisz i wyjdź', style: 'primary' }],
+          this.isVR
+            ? [{ id: 'doll', label: '🏠 Makieta' }, { id: 'exit', label: 'Zapisz i wyjdź', style: 'primary' }]
+            : [{ id: 'doll', label: '🏠 Makieta' }, { id: 'exitWalk', label: 'Wróć do 1:1 w pokoju', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }],
         ],
       };
     }
@@ -649,7 +711,8 @@ export class XRApp {
       rows: [
         [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
         [{ id: 'add', label: '+ Dodaj mebel' }, { id: 'align', label: 'Wyrównaj model' }],
-        [{ id: 'mesh', label: this.showMesh ? 'Trójkąty skanu: wł.' : 'Trójkąty skanu: wył.', style: this.showMesh ? 'active' : undefined }, { id: 'doll', label: '🏠 Makieta' }],
+        toolRow,
+        [{ id: 'mesh', label: this.showMesh ? 'Trójkąty skanu: wł.' : 'Trójkąty skanu: wył.', style: this.showMesh ? 'active' : undefined }, { id: 'doll', label: '🏠 Makieta' }, { id: 'rooms', label: '🚶 Spacer wirtualny' }],
         variantRow,
         [{ id: 'exit', label: 'Zapisz i wyjdź', style: 'primary' }],
       ],
@@ -687,8 +750,16 @@ export class XRApp {
   }
 
   startRoomCapture() {
+    if (this.roomCaptureUsed) {
+      this.message = 'Skanowanie można uruchomić raz na sesję. Kliknij „Anuluj”, a potem znowu „Skanuj pokój”, albo użyj Ustawienia → Środowisko fizyczne → Konfiguracja przestrzeni.';
+      this.updatePanel();
+      return;
+    }
     if (this.session.initiateRoomCapture) {
+      this.roomCaptureUsed = true;
+      this.message = 'Po skanowaniu systemowym nowe dane pojawią się tu automatycznie.';
       this.session.initiateRoomCapture().catch((e) => {
+        this.roomCaptureUsed = false;
         this.message = 'Nie można uruchomić Space Setup z aplikacji (' + (e && e.message) + '). Uruchom ją w ustawieniach Questa: Środowisko fizyczne → Konfiguracja przestrzeni.';
         this.updatePanel();
       });
@@ -877,7 +948,7 @@ export class XRApp {
   /** root = F(podłoga) ∘ A(korekta) ∘ T(pokój)^-1 */
   applyAlignment() {
     if (this.dollhouse) { this.applyDollMatrix(); return; }
-    if (this.isVR) { if (this.walkRoot) this.setRootMatrix(this.walkRoot); return; }
+    if (this.walking) { if (this.walkRoot) this.setRootMatrix(this.walkRoot); return; }
     const r = this.anchorRoom();
     if (!r || !this.anchorFrame) return;
     const a = r.xrAlign || { x: 0, z: 0, rot: 0 };
@@ -923,6 +994,7 @@ export class XRApp {
     this.doll = { cx: b.cx, cz: b.cz, scale: Math.min(0.2, 0.8 / b.size), yaw: 0, pos: new THREE.Vector3(0, 1, -0.8) };
     this.placeDollInFront();
     this.dollhouse = true;
+    this.walking = false;
     this.selectedId = null;
     this.state = 'edit';
     this.view.mode = 'editor';
@@ -938,6 +1010,7 @@ export class XRApp {
     if (!room) return;
     this.anchorRoomId = room.id;
     this.dollhouse = false;
+    this.walking = true;
     this.dollDrag = null;
     if (this.dollGrabs) this.dollGrabs.clear();
     this.view.mode = 'editor';
@@ -950,9 +1023,21 @@ export class XRApp {
     this.refresh();
   }
 
-  /** Chodzenie gałką (lewa) i obrót skokowy (prawa) w VR. */
+  /** AR: powrót ze spaceru wirtualnego do modelu nałożonego na prawdziwy pokój. */
+  exitWalk() {
+    if (this.isVR) return;
+    this.walking = false;
+    this.view.mode = 'mr';
+    this.teleportAim = null;
+    this.aligned = false; // ponowne dopasowanie do podłogi ze Space Setup
+    this.applyAlignment();
+    this.placePanel(true);
+    this.refresh();
+  }
+
+  /** Chodzenie gałką (lewa), obrót skokowy i teleport (prawa) — jak w grach VR. */
   updateLocomotion(dt) {
-    if (!this.isVR || this.dollhouse || !this.walkRoot || !this.head) return;
+    if (!this.walking || this.dollhouse || !this.walkRoot || !this.head) { if (this.teleMarker) this.teleMarker.visible = false; return; }
     this.turnCooldown = Math.max(0, this.turnCooldown - dt);
     const headPos = new THREE.Vector3().setFromMatrixPosition(this.head);
     const fwd = new THREE.Vector3(0, 0, -1).transformDirection(this.head).setY(0).normalize();
@@ -967,7 +1052,15 @@ export class XRApp {
         // użytkownik idzie do przodu = świat przesuwa się do tyłu
         this.walkRoot.premultiply(new THREE.Matrix4().makeTranslation(-v.x, 0, -v.z));
         changed = true;
-      } else if (src.handedness === 'right' && sx && this.turnCooldown === 0) {
+      } else if (src.handedness === 'right' && sy < -0.6) {
+        // celowanie teleportem
+        this.teleportAim = this.rayFloor(c);
+      } else if (src.handedness === 'right' && this.teleportAim && Math.abs(sy) < 0.25) {
+        const d = this.teleportAim.clone().sub(headPos);
+        if (Math.hypot(d.x, d.z) < 15) this.walkRoot.premultiply(new THREE.Matrix4().makeTranslation(-d.x, 0, -d.z));
+        this.teleportAim = null;
+        changed = true;
+      } else if (src.handedness === 'right' && Math.abs(sx) > 0.6 && Math.abs(sy) < 0.5 && this.turnCooldown === 0) {
         const ang = sx > 0 ? rad(30) : -rad(30);
         const m = new THREE.Matrix4().makeTranslation(headPos.x, 0, headPos.z)
           .multiply(new THREE.Matrix4().makeRotationY(ang))
@@ -978,11 +1071,20 @@ export class XRApp {
       }
     }
     if (changed) this.applyAlignment();
+    if (!this.teleMarker) {
+      this.teleMarker = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.25, 32), new THREE.MeshBasicMaterial({ color: 0x40e0ff, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthTest: false }));
+      this.teleMarker.rotation.x = -Math.PI / 2;
+      this.teleMarker.renderOrder = 40;
+      this.scene.add(this.teleMarker);
+    }
+    this.teleMarker.visible = !!this.teleportAim;
+    if (this.teleportAim) this.teleMarker.position.copy(this.teleportAim).setY(this.teleportAim.y + 0.01);
   }
 
   exitDollhouse() {
     if (this.isVR) { this.enterWalk(this.anchorRoomId); return; }
     this.dollhouse = false;
+    this.walking = false;
     this.dollDrag = null;
     if (this.dollGrabs) this.dollGrabs.clear();
     this.view.mode = 'mr';
@@ -1037,6 +1139,90 @@ export class XRApp {
     this.commit();
   }
 
+  // ======================= wygląd =======================
+  lookFor() {
+    const v = this.project.view || (this.project.view = {});
+    if (!v.mr) v.mr = { wallStyle: 'transparent', wallOpacity: 0.25, furnStyle: 'solid', furnOpacity: 1, floor: false };
+    if (!v.model) v.model = { wallStyle: 'solid', wallOpacity: 0.5, furnStyle: 'solid', furnOpacity: 1, floor: true };
+    return this.dollhouse || this.walking || this.isVR ? v.model : v.mr;
+  }
+
+  saveLook() {
+    this.dirty = true;
+    if (this.onSave) this.onSave(this.project);
+    this.refresh();
+  }
+
+  // ======================= miarka =======================
+  /** Punkt trafiony promieniem: meble, ściany, podłoga makiety, siatka skanu na żywo, a w ostateczności podłoga. */
+  measureHit(c) {
+    const rc = this.rayFrom(c);
+    const objs = [...this.view.getPickables()];
+    if (this.live.visible) objs.push(...this.live.group.children);
+    const hits = rc.intersectObjects(objs, true).filter((h) => h.object.visible !== false);
+    if (hits.length) return hits[0].point.clone();
+    return this.rayFloor(c);
+  }
+
+  measureText(a, b) {
+    const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    const dxz = Math.hypot(a[0] - b[0], a[2] - b[2]);
+    return Math.abs(a[1] - b[1]) > 0.02 ? `${cmTxt(d)} cm (poziomo ${cmTxt(dxz)} cm)` : `${cmTxt(d)} cm`;
+  }
+
+  // ======================= uchwyty zmiany wymiarów =======================
+  /** Oś mebla w świecie + skala makiety. */
+  furnitureAxisWorld(room, f, key) {
+    const rot = (f.rot || 0) + (room.transform.rot || 0);
+    const dirApt = key === 'h' ? new THREE.Vector3(0, 1, 0) : key === 'w' ? new THREE.Vector3(Math.cos(rot), 0, -Math.sin(rot)) : new THREE.Vector3(Math.sin(rot), 0, Math.cos(rot));
+    const scale = new THREE.Vector3().setFromMatrixScale(this.root.matrix).x;
+    const dir = dirApt.clone().transformDirection(this.root.matrix);
+    return { dir, scale };
+  }
+
+  startResize(c, handle) {
+    const found = findFurniture(this.project, handle.fid);
+    if (!found) return;
+    const { room, f } = found;
+    const { dir, scale } = this.furnitureAxisWorld(room, f, handle.key);
+    const cw = roomToWorld(room, [f.x, f.z]);
+    const baseY = handle.key === 'h' ? (f.y || 0) : (f.y || 0) + f.h / 2;
+    const origin = new THREE.Vector3(cw[0], baseY, cw[1]).applyMatrix4(this.root.matrix);
+    this.resize = { c, key: handle.key, fid: f.id, origin, dir, scale, half0: handle.key === 'h' ? 0 : f[handle.key] / 2, x0: f.x, z0: f.z, size0: f[handle.key] };
+    this.haptic(c, 0.4, 20);
+  }
+
+  updateResize() {
+    const r = this.resize;
+    const found = findFurniture(this.project, r.fid);
+    if (!found) { this.resize = null; return; }
+    const { f } = found;
+    const rc = this.rayFrom(r.c);
+    const o = rc.ray.origin, d = rc.ray.direction, u = r.dir;
+    const w0 = r.origin.clone().sub(o);
+    const b = u.dot(d), dd = u.dot(w0), e = d.dot(w0);
+    const den = 1 - b * b;
+    if (den < 1e-4) return;
+    const t = ((b * e - dd) / den) / r.scale; // w metrach rzeczywistych (także w makiecie)
+    const size = Math.max(0.05, Math.round((t + r.half0) * 100) / 100);
+    if (Math.abs(size - f[r.key]) < 0.005) return;
+    resizeFurniture(f, r.key, size);
+    if (r.key !== 'h') {
+      // przeciwległa ściana bryły zostaje w miejscu
+      const shift = size / 2 - r.half0;
+      const ax = r.key === 'w' ? [Math.cos(f.rot || 0), -Math.sin(f.rot || 0)] : [Math.sin(f.rot || 0), Math.cos(f.rot || 0)];
+      f.x = r.x0 + ax[0] * shift;
+      f.z = r.z0 + ax[1] * shift;
+    }
+    r.changed = true;
+    if (this.frameCount % 2 === 0) {
+      this.view.setOptions({ conflicts: this.allConflicts() });
+      this.view.rebuild(this.project);
+      this.updateSelectionLabel();
+    }
+    if (this.frameCount % 10 === 0) this.updatePanel();
+  }
+
   // ======================= wybór i chwytanie =======================
   onSelectStart(c) {
     const ph = this.panelHit(c);
@@ -1049,6 +1235,23 @@ export class XRApp {
       const fp = this.rayFloor(c);
       if (fp) this.alignDrag = { c, last: fp };
       return;
+    }
+    if (this.state === 'measure') {
+      const p = this.measureHit(c);
+      if (p) {
+        const q = p.applyMatrix4(this.root.matrix.clone().invert());
+        if (!this.measures) this.measures = [];
+        if (this.measures.length >= 20) this.measures = [];
+        this.measures.push([q.x, q.y, q.z]);
+        this.haptic(c, 0.3, 15);
+        this.updateSelectionLabel();
+        this.updatePanel();
+      }
+      return;
+    }
+    if (this.handleMeshes && this.handleMeshes.length) {
+      const hh = this.rayFrom(c).intersectObjects(this.handleMeshes, false)[0];
+      if (hh) { this.startResize(c, hh.object.userData.handle); return; }
     }
     const fh = this.furnitureHit(c);
     if (this.state === 'merge') {
@@ -1090,6 +1293,11 @@ export class XRApp {
 
   onSelectEnd(c) {
     this.endDollGrab(c);
+    if (this.resize && this.resize.c === c) {
+      const changed = this.resize.changed;
+      this.resize = null;
+      if (changed) this.commit(); else this.refresh();
+    }
     if (this.alignDrag && this.alignDrag.c === c) {
       this.alignDrag = null;
       this.commit();
@@ -1197,6 +1405,7 @@ export class XRApp {
   }
 
   updateGrab(dt) {
+    if (this.resize) { this.updateResize(); return; }
     if (this.dollhouse) this.updateDollhouse(dt);
     else this.updateLocomotion(dt);
     if (this.alignDrag) {
@@ -1465,7 +1674,7 @@ export class XRApp {
   refresh() {
     if (this.state === 'scan') { this.updatePanel(); return; }
     // zapisana siatka nie jest potrzebna w MR — trójkąty pokazuje podgląd na żywo (LiveSceneOverlay)
-    this.view.setOptions({ showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId });
+    this.view.setOptions({ showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look: this.lookFor(), cameras: this.project.cameras || [] });
     this.view.rebuild(this.project);
     this.updateSelectionLabel();
     this.updatePanel();
@@ -1508,6 +1717,45 @@ export class XRApp {
           this.labels.add(t);
         }
       }
+    }
+    // uchwyty zmiany wymiarów (szerokość / głębokość / wysokość)
+    this.handleMeshes = [];
+    if (s && !s.f.hidden && !this.grab && this.state === 'edit') {
+      const f = s.f;
+      const hs = this.dollhouse ? 0.022 / this.doll.scale : 0.045;
+      const defs = [['w', f.w / 2, (f.y || 0) + f.h / 2, 0, 0xff4040], ['d', 0, (f.y || 0) + f.h / 2, f.d / 2, 0x4080ff], ['h', 0, (f.y || 0) + f.h + hs, 0, 0x30d050]];
+      for (const [key, lx, y, lz, color] of defs) {
+        const w = roomToWorld(s.room, localToWorld(f, lx, lz));
+        const m = new THREE.Mesh(new THREE.SphereGeometry(hs, 16, 12), new THREE.MeshBasicMaterial({ color, depthTest: false }));
+        m.renderOrder = 35;
+        m.position.set(w[0], y, w[1]);
+        m.userData = { handle: { key, fid: f.id }, isClearance: true };
+        this.labels.add(m);
+        this.handleMeshes.push(m);
+      }
+    }
+    // pomiary miarką (punkty w układzie mieszkania — w makiecie wymiary są rzeczywiste)
+    const ms = this.measures || [];
+    if (ms.length) {
+      const pr = this.dollhouse ? 0.01 / this.doll.scale : 0.015;
+      ms.forEach((p, i) => {
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(pr, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffd400, depthTest: false }));
+        dot.renderOrder = 36;
+        dot.position.set(p[0], p[1], p[2]);
+        dot.userData.isClearance = true;
+        this.labels.add(dot);
+        if (i % 2 === 1) {
+          const a = ms[i - 1];
+          const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...p)]), new THREE.LineBasicMaterial({ color: 0xffd400, depthTest: false }));
+          line.renderOrder = 36;
+          line.userData.isClearance = true;
+          this.labels.add(line);
+          const t = makeTextSprite(this.measureText(a, p), { color: '#ffd400', bg: 'rgba(0,0,0,0.85)', height: 0.05 });
+          t.scale.multiplyScalar(k);
+          t.position.set((a[0] + p[0]) / 2, (a[1] + p[1]) / 2 + 0.04 * k, (a[2] + p[2]) / 2);
+          this.labels.add(t);
+        }
+      });
     }
     if (this.state === 'verify' || this.state === 'edit') {
       for (const r of this.project.rooms) for (const f of r.furniture) {

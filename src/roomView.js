@@ -53,7 +53,8 @@ export class ApartmentView {
     this.roomGroups = new Map();
     this.furnitureObjects = new Map();
     this.pickables = [];
-    this.options = { wallMode: 'full', showMesh: false, showGhosts: true, showLabels: true, showZones: true, selectedId: null, conflicts: new Map(), selection: null, mode: 'furniture' };
+    // look: wygląd w goglach { wallStyle: 'off'|'edges'|'transparent'|'solid', wallOpacity, furnStyle: 'solid'|'edges', furnOpacity, floor }
+    this.options = { look: null, cameras: null, showCameras: true, wallMode: 'full', showMesh: false, showGhosts: true, showLabels: true, showZones: true, selectedId: null, conflicts: new Map(), selection: null, mode: 'furniture' };
     this.materials = {
       floor: new THREE.MeshStandardMaterial({ color: 0xe9e4da, roughness: 0.95, side: THREE.DoubleSide }),
       floorSel: new THREE.MeshStandardMaterial({ color: 0xd9e8ff, roughness: 0.95, side: THREE.DoubleSide }),
@@ -90,6 +91,9 @@ export class ApartmentView {
       this.group.add(g);
       this.roomGroups.set(room.id, g);
     }
+    if (this.options.showCameras && Array.isArray(this.options.cameras)) {
+      for (const cam of this.options.cameras) if (cam.id !== this.options.hiddenCameraId) this.group.add(this.buildCamera(cam));
+    }
     this.applyHighlights();
   }
 
@@ -103,12 +107,13 @@ export class ApartmentView {
     const sel = this.options.selection;
     const outline = room.outline;
     const isMR = this.mode === 'mr';
+    const look = this.options.look;
 
     // podłoga
     const shape = new THREE.Shape(outline.map(([x, z]) => new THREE.Vector2(x, -z)));
     const floorGeo = new THREE.ShapeGeometry(shape);
     floorGeo.rotateX(-Math.PI / 2);
-    if (!isMR) {
+    if (look ? look.floor : !isMR) {
       const roomSelected = sel && sel.kind === 'room' && sel.roomId === room.id;
       const floor = new THREE.Mesh(floorGeo, roomSelected ? this.materials.floorSel : this.materials.floor);
       floor.receiveShadow = true;
@@ -126,7 +131,7 @@ export class ApartmentView {
     const ol = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), this.materials.outline);
     ol.userData.kind = 'outline';
     if (isMR || this.options.mode === 'walls') g.add(ol); else ol.geometry.dispose();
-    if (isMR) {
+    if (isMR && !(look && look.wallStyle !== 'off')) {
       const top = pts.map((p) => new THREE.Vector3(p.x, room.height, p.z));
       const tl = new THREE.Line(new THREE.BufferGeometry().setFromPoints(top), new THREE.LineBasicMaterial({ color: 0x00e0ff, transparent: true, opacity: 0.35 }));
       tl.userData.ownMaterial = true;
@@ -134,8 +139,10 @@ export class ApartmentView {
     }
 
     // ściany i otwory
-    if (!isMR && this.options.wallMode !== 'hidden') {
+    const drawWalls = look ? look.wallStyle !== 'off' : (!isMR && this.options.wallMode !== 'hidden');
+    if (drawWalls) {
       const wallH = this.options.wallMode === 'low' ? Math.min(1.0, room.height) : room.height;
+      this.wallLook = look ? this.makeWallLook(look) : null;
       for (let i = 0; i < outline.length; i++) this.buildWall(g, room, i, wallH);
     }
     const clipH = !isMR && this.options.wallMode === 'low' ? Math.min(1.0, room.height) : Infinity;
@@ -190,12 +197,23 @@ export class ApartmentView {
     return g;
   }
 
+  /** Materiały ścian dla wyglądu w goglach (półprzezroczyste / krawędzie). */
+  makeWallLook(look) {
+    if (this.wallLookCache && this.wallLookCache.key === JSON.stringify(look)) return this.wallLookCache;
+    const op = look.wallStyle === 'solid' ? 1 : look.wallStyle === 'edges' ? 0 : look.wallOpacity;
+    const mat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.9, transparent: op < 1, opacity: op, depthWrite: op >= 1, colorWrite: op > 0 });
+    const edge = new THREE.LineBasicMaterial({ color: 0x00d0ff, transparent: true, opacity: look.wallStyle === 'edges' ? 0.95 : 0.35 });
+    this.wallLookCache = { key: JSON.stringify(look), mat, edge, edges: look.wallStyle === 'edges' || look.wallStyle === 'transparent' };
+    return this.wallLookCache;
+  }
+
   buildWall(g, room, i, wallH) {
     const e = edgeOf(room.outline, i);
     if (e.length < 0.01) return;
     const sel = this.options.selection;
     const selected = sel && sel.kind === 'edge' && sel.roomId === room.id && sel.index === i;
-    const mat = selected ? this.materials.wallSel : this.materials.wall;
+    const wl = this.wallLook;
+    const mat = selected ? this.materials.wallSel : wl ? wl.mat : this.materials.wall;
     const ops = (room.openings || []).filter((o) => o.edge % room.outline.length === i)
       .map((o) => ({ o, s: Math.max(0, Math.min(o.offset, e.length)), t: Math.min(e.length, o.offset + o.width) }))
       .sort((a, b) => a.s - b.s);
@@ -214,6 +232,12 @@ export class ApartmentView {
       m.userData = { kind: 'wall', roomId: room.id, index: i };
       g.add(m);
       this.pickables.push(m);
+      if (wl && wl.edges) {
+        const el = new THREE.LineSegments(new THREE.EdgesGeometry(geo), wl.edge);
+        el.position.copy(m.position);
+        el.rotation.copy(m.rotation);
+        g.add(el);
+      }
     };
     let cur = 0;
     for (const { o, s, t } of ops) {
@@ -274,6 +298,41 @@ export class ApartmentView {
     }
   }
 
+  /** Kamera zdjęcia: ostrosłup widzenia (skąd i w którą stronę zrobiono zdjęcie). */
+  buildCamera(cam) {
+    const g = new THREE.Group();
+    const sel = this.options.selection && this.options.selection.kind === 'camera' && this.options.selection.id === cam.id;
+    const color = sel ? COLOR_SELECTED : 0xff2e88;
+    const pos = new THREE.Vector3(...cam.pos), target = new THREE.Vector3(...cam.target);
+    const m = new THREE.Matrix4().lookAt(pos, target, new THREE.Vector3(0, 1, 0));
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    const L = 0.45; // długość ostrosłupa [m]
+    const hh = Math.tan(((cam.fov || 55) * Math.PI) / 360) * L, hw = hh * (cam.aspect || 4 / 3);
+    const c = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => new THREE.Vector3(x, y, -L));
+    const pts = [];
+    for (const v of c) pts.push(new THREE.Vector3(), v);
+    for (let i = 0; i < 4; i++) pts.push(c[i], c[(i + 1) % 4]);
+    pts.push(new THREE.Vector3(-hw * 0.4, hh, -L), new THREE.Vector3(0, hh * 1.4, -L), new THREE.Vector3(0, hh * 1.4, -L), new THREE.Vector3(hw * 0.4, hh, -L)); // „góra” zdjęcia
+    const lineMat = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
+    const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), lineMat);
+    lines.renderOrder = 15;
+    lines.userData.ownMaterial = true;
+    const faceGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), c[0], c[1], new THREE.Vector3(), c[1], c[2], new THREE.Vector3(), c[2], c[3], new THREE.Vector3(), c[3], c[0], c[0], c[1], c[2], c[0], c[2], c[3]]);
+    const face = new THREE.Mesh(faceGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
+    face.userData = { kind: 'camera', id: cam.id, ownMaterial: true };
+    g.add(lines, face);
+    g.position.copy(pos);
+    g.quaternion.copy(q);
+    g.userData = { kind: 'camera', id: cam.id };
+    this.pickables.push(face);
+    if (this.cssLabels && this.options.showLabels) {
+      const lab = makeLabel('📷 ' + cam.name, 'label3d camera');
+      lab.position.set(0, hh * 1.6, -L);
+      g.add(lab);
+    }
+    return g;
+  }
+
   buildFurniture(f, room) {
     const isMR = this.mode === 'mr';
     const obj = new THREE.Group();
@@ -282,8 +341,17 @@ export class ApartmentView {
     obj.userData = { kind: 'furniture', id: f.id, roomId: room.id };
     // kształt złożony (scalone bryły) = kilka części, każda z własnym położeniem w układzie mebla
     const parts = f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length ? f.parts : [{ ...f, x: 0, z: 0, y: 0, rot: 0 }];
-    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(f.color), roughness: 0.75, transparent: isMR, opacity: isMR ? 0.45 : 1 });
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x222222, transparent: true, opacity: isMR ? 0.9 : 0.5 });
+    // wygląd: globalny (look) + własny mebla (f.display: 'transparent' | 'edges')
+    const look = this.options.look;
+    const style = f.display === 'edges' || (look && look.furnStyle === 'edges' && f.display !== 'transparent') ? 'edges' : 'solid';
+    let opacity = look ? look.furnOpacity : isMR ? 0.45 : 1;
+    if (f.display === 'transparent') opacity = Math.min(opacity, 0.3);
+    if (style === 'edges') opacity = 0;
+    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(f.color), roughness: 0.75, transparent: opacity < 1, opacity, depthWrite: opacity >= 1, colorWrite: opacity > 0 });
+    const edgeBase = style === 'edges' ? new THREE.Color(f.color).offsetHSL(0, 0, 0.15).getHex() : 0x222222;
+    const edgeMat = new THREE.LineBasicMaterial({ color: edgeBase, transparent: true, opacity: style === 'edges' || isMR ? 0.95 : 0.5 });
+    obj.userData.edgeBase = edgeBase;
+    obj.userData.edgeOpacity = edgeMat.opacity;
     obj.userData.meshes = [];
     obj.userData.edgeMat = edgeMat;
     obj.userData.mat = mat;
@@ -345,8 +413,8 @@ export class ApartmentView {
       mat.emissive.setHex(hard ? COLOR_CONFLICT : warn ? COLOR_WARN : 0x000000);
       mat.emissiveIntensity = hard || warn ? 0.55 : 0;
       const sel = id === selectedId || !!(this.options.selectedIds && this.options.selectedIds.has(id));
-      edgeMat.color.setHex(sel ? COLOR_SELECTED : hard ? COLOR_CONFLICT : 0x222222);
-      edgeMat.opacity = sel ? 1 : this.mode === 'mr' ? 0.9 : 0.5;
+      edgeMat.color.setHex(sel ? COLOR_SELECTED : hard ? COLOR_CONFLICT : obj.userData.edgeBase);
+      edgeMat.opacity = sel ? 1 : obj.userData.edgeOpacity;
       if (obj.userData.label) obj.userData.label.element.classList.toggle('conflict', hard);
       if (obj.userData.label) obj.userData.label.element.classList.toggle('selected', sel);
     }

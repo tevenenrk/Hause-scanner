@@ -11,7 +11,7 @@ import {
 } from './geometry.js';
 import {
   History, createFurniture, createOpening, createRoom, findFurniture, snapshotScanned, projectToJSON, projectFromJSON, uid,
-  mergeFurniture, splitFurniture, resizeFurniture, linkDoors, unlinkDoor, ensureVariants, switchVariant, createVariant, deleteVariant, activeVariant,
+  mergeFurniture, splitFurniture, resizeFurniture, linkDoors, unlinkDoor, addMedia, createCamera, pruneMedia, ensureVariants, switchVariant, createVariant, deleteVariant, activeVariant,
 } from './model.js';
 import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from './labels.js';
 import { saveProject } from './store.js';
@@ -21,7 +21,7 @@ const cm = (m) => Math.round(m * 1000) / 10; // metry -> cm z dokładnością 1 
 const fmtCm = (m) => `${Math.round(m * 100)} cm`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function download(blob, filename) {
+export function download(blob, filename) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
@@ -30,7 +30,26 @@ function download(blob, filename) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
-function safeName(s) {
+/** Wczytuje zdjęcie z pliku i zmniejsza do max `maxSize` px (JPEG). */
+export function loadImageFile(file, maxSize = 1600) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, maxSize / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve({ data: c.toDataURL('image/jpeg', 0.85), w, h, name: file.name });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Nie udało się wczytać zdjęcia ' + file.name)); };
+    img.src = url;
+  });
+}
+
+export function safeName(s) {
   return String(s || 'projekt').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'projekt';
 }
 
@@ -60,6 +79,9 @@ export class Editor {
       issues: document.getElementById('issues'),
       verify: document.getElementById('verify-card'),
       variants: document.getElementById('variants'),
+      cameras: document.getElementById('cameras'),
+      matchUI: document.getElementById('match-ui'),
+      matchPhoto: document.getElementById('match-photo'),
       saveStatus: document.getElementById('save-status'),
       projectName: document.getElementById('project-name'),
     };
@@ -152,6 +174,19 @@ export class Editor {
     this.renderer.setSize(w, h);
     this.labelRenderer.setSize(w, h);
     this.persp.aspect = w / h;
+    this.renderer.setScissorTest(false);
+    if (this.matchCam) {
+      // tryb dopasowania: obraz o proporcjach zdjęcia, wyśrodkowany (z pasami)
+      const a = this.matchCam.aspect || 4 / 3;
+      let rw = w, rh = w / a;
+      if (rh > h) { rh = h; rw = h * a; }
+      const x = (w - rw) / 2, y = (h - rh) / 2;
+      this.renderer.setViewport(x, y, rw, rh);
+      this.renderer.setScissor(x, y, rw, rh);
+      this.renderer.setScissorTest(true);
+      this.persp.aspect = a;
+      Object.assign(this.el.matchPhoto.style, { left: `${x}px`, top: `${y}px`, width: `${rw}px`, height: `${rh}px` });
+    }
     this.persp.updateProjectionMatrix();
     const half = this.orthoHalf || 5;
     this.ortho.left = -half * (w / h);
@@ -226,7 +261,7 @@ export class Editor {
   /** Pełne odświeżenie po zmianie (przebudowa sceny, paneli). */
   refresh() {
     this.computeAllConflicts();
-    this.view3d.setOptions({ ...this.viewOpts, selection: this.selection, selectedId: this.selection && this.selection.kind === 'furniture' ? this.selection.id : null, selectedIds: this.extra, conflicts: this.conflicts, mode: this.mode });
+    this.view3d.setOptions({ ...this.viewOpts, selection: this.selection, selectedId: this.selection && this.selection.kind === 'furniture' ? this.selection.id : null, selectedIds: this.extra, conflicts: this.conflicts, mode: this.mode, cameras: this.project.cameras || [], hiddenCameraId: this.matchCam ? this.matchCam.id : null });
     this.view3d.rebuild(this.project);
     this.updateOverlay();
     this.renderPanels();
@@ -288,6 +323,7 @@ export class Editor {
     const s = this.selection;
     if (!s) return;
     const room = s.roomId && this.project.rooms.find((r) => r.id === s.roomId);
+    if (s.kind === 'camera') { if (!(this.project.cameras || []).some((c) => c.id === s.id)) this.selection = null; return; }
     if (s.kind === 'furniture' && !findFurniture(this.project, s.id)) this.selection = null;
     else if (s.kind !== 'furniture' && !room) this.selection = null;
     else if (s.kind === 'opening' && !room.openings.some((o) => o.id === s.id)) this.selection = null;
@@ -300,6 +336,7 @@ export class Editor {
     const s = this.selection;
     if (!s) return null;
     if (s.kind === 'furniture') return findFurniture(this.project, s.id);
+    if (s.kind === 'camera') { const cam = (this.project.cameras || []).find((c) => c.id === s.id); return cam ? { cam } : null; }
     const room = this.room(s.roomId);
     if (!room) return null;
     if (s.kind === 'opening') return { room, op: room.openings.find((o) => o.id === s.id) };
@@ -393,7 +430,7 @@ export class Editor {
   setMode(mode) {
     if (this.mode === 'measure' && mode !== 'measure') this.measure = [];
     this.mode = mode;
-    if (mode === 'furniture' && this.selection && this.selection.kind !== 'furniture') this.selection = null;
+    if (mode === 'furniture' && this.selection && !['furniture', 'camera'].includes(this.selection.kind)) this.selection = null;
     if (mode === 'walls' && this.selection && !['edge', 'vertex', 'opening'].includes(this.selection.kind)) this.selection = null;
     if (mode === 'rooms' && this.selection && this.selection.kind !== 'room') this.selection = null;
     for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('active', b.dataset.mode === mode);
@@ -536,7 +573,7 @@ export class Editor {
   }
 
   onPointerDown(e) {
-    if (e.button !== 0 || !this.project) return;
+    if (e.button !== 0 || !this.project || this.matchCam) return;
     this.setPointer(e);
     this.down = { x: e.clientX, y: e.clientY, moved: false, handled: false };
     const mode = this.mode;
@@ -552,7 +589,12 @@ export class Editor {
       return;
     }
     if (mode === 'furniture') {
-      const hit = this.hitObjects(this.view3d.getPickables(['furniture']));
+      const hit = this.hitObjects(this.view3d.getPickables(['furniture', 'camera']));
+      if (hit && hit.object.userData.kind === 'camera') {
+        this.select({ kind: 'camera', id: hit.object.userData.id });
+        this.stopControls(e);
+        return;
+      }
       if (hit) {
         const { id, roomId } = hit.object.userData;
         const room = this.room(roomId);
@@ -778,6 +820,13 @@ export class Editor {
   deleteSelected() {
     const s = this.selection;
     if (!s) return;
+    if (s.kind === 'camera') {
+      this.project.cameras = (this.project.cameras || []).filter((c) => c.id !== s.id);
+      pruneMedia(this.project);
+      this.selection = null;
+      this.commit();
+      return;
+    }
     if (s.kind === 'furniture') {
       const ids = this.selectedFurnitureIds();
       if (ids.length > 1) {
@@ -903,15 +952,108 @@ export class Editor {
     this.frameAll();
   }
 
+  // ======================= zdjęcia i kamery =======================
+  showPhoto(mediaId) {
+    const m = (this.project.media || {})[mediaId];
+    if (!m) return;
+    const lb = document.getElementById('lightbox');
+    lb.querySelector('img').src = m.data;
+    lb.hidden = false;
+  }
+
+  /** Zdjęcie pomieszczenia → kamera w bieżącym widoku 3D → tryb dopasowania do zdjęcia. */
+  async addCameraPhoto(file) {
+    try {
+      const img = await loadImageFile(file, 2000);
+      const mediaId = addMedia(this.project, img.data, img);
+      if (this.view === 'top') this.setView('3d');
+      const n = (this.project.cameras || []).length + 1;
+      const cam = createCamera({
+        name: `Zdjęcie ${n}`,
+        mediaId,
+        pos: this.persp.position.toArray(),
+        target: this.controls3d.target.toArray(),
+        fov: 55,
+        aspect: img.w / img.h,
+      });
+      if (!this.project.cameras) this.project.cameras = [];
+      this.project.cameras.push(cam);
+      this.selection = { kind: 'camera', id: cam.id };
+      this.commit();
+      this.enterMatch(cam);
+      this.toast('Ustaw widok tak, żeby makieta pokryła się ze zdjęciem, i zapisz pozycję kamery.');
+    } catch (e) {
+      this.toast(e.message, true);
+    }
+  }
+
+  enterMatch(cam) {
+    this.matchCam = cam;
+    this.matchPrev = { pos: this.persp.position.clone(), target: this.controls3d.target.clone(), fov: this.persp.fov, view: this.view };
+    if (this.view !== '3d') this.setView('3d');
+    this.controls3d.autoRotate = false;
+    this.persp.position.set(...cam.pos);
+    this.controls3d.target.set(...cam.target);
+    this.persp.fov = cam.fov || 55;
+    this.persp.near = 0.02;
+    const media = (this.project.media || {})[cam.mediaId];
+    this.el.matchPhoto.src = media ? media.data : '';
+    this.el.matchPhoto.hidden = !media;
+    this.el.matchUI.hidden = false;
+    document.getElementById('match-fov').value = String(Math.round(this.persp.fov));
+    document.getElementById('match-fov-val').textContent = `${Math.round(this.persp.fov)}°`;
+    this.labelRenderer.domElement.style.display = 'none';
+    this.el.hint.textContent = '';
+    this.resize();
+    this.refresh();
+  }
+
+  saveMatch() {
+    const cam = this.matchCam;
+    if (!cam) return;
+    cam.pos = this.persp.position.toArray().map((v) => Math.round(v * 1000) / 1000);
+    cam.target = this.controls3d.target.toArray().map((v) => Math.round(v * 1000) / 1000);
+    cam.fov = Math.round(this.persp.fov * 10) / 10;
+    this.exitMatch(true);
+    this.commit();
+    this.toast(`Zapisano pozycję kamery „${cam.name}”.`);
+  }
+
+  exitMatch(keepView = false) {
+    if (!this.matchCam) return;
+    const prev = this.matchPrev;
+    this.matchCam = null;
+    this.el.matchUI.hidden = true;
+    this.el.matchPhoto.hidden = true;
+    this.labelRenderer.domElement.style.display = '';
+    this.persp.fov = 50;
+    if (!keepView && prev) { this.persp.position.copy(prev.pos); this.controls3d.target.copy(prev.target); }
+    this.setMode(this.mode);
+    this.resize();
+    this.refresh();
+  }
+
+  async exportAI() {
+    try {
+      const { exportAIPackage } = await import('./aiExport.js');
+      this.toast('Przygotowuję paczkę dla AI…');
+      await exportAIPackage(this);
+    } catch (e) {
+      console.error(e);
+      this.toast('Nie udało się przygotować paczki: ' + e.message, true);
+    }
+  }
+
   // ======================= eksport / import =======================
   exportJSON(includeMesh = true) {
     const json = JSON.stringify(projectToJSON(this.project, { includeMesh }));
     download(new Blob([json], { type: 'application/json' }), `${safeName(this.project.name)}.hause.json`);
   }
 
-  async exportGLB() {
+  /** Model 3D (GLB) mieszkania z aktywną wersją układu. */
+  async buildGLB() {
     const v = new ApartmentView({ mode: 'editor', cssLabels: false });
-    v.setOptions({ wallMode: 'full', showMesh: false, showGhosts: false, showZones: false, showLabels: false, conflicts: new Map() });
+    v.setOptions({ wallMode: 'full', showMesh: false, showGhosts: false, showZones: false, showLabels: false, showCameras: false, conflicts: new Map() });
     v.rebuild(this.project);
     v.group.traverse((o) => {
       if (o.isMesh && o.userData && o.userData.id) {
@@ -920,12 +1062,18 @@ export class Editor {
       }
     });
     try {
-      const glb = await new GLTFExporter().parseAsync(v.group, { binary: true });
+      return await new GLTFExporter().parseAsync(v.group, { binary: true });
+    } finally {
+      v.dispose();
+    }
+  }
+
+  async exportGLB() {
+    try {
+      const glb = await this.buildGLB();
       download(new Blob([glb], { type: 'model/gltf-binary' }), `${safeName(this.project.name)}.glb`);
     } catch (e) {
       this.toast('Eksport GLB nie powiódł się: ' + e.message, true);
-    } finally {
-      v.dispose();
     }
   }
 
@@ -1049,6 +1197,43 @@ export class Editor {
       if (it) { this.setMode('furniture'); this.select({ kind: 'furniture', id: it.dataset.fid }); }
     });
     this.el.verify.addEventListener('click', (e) => this.onVerifyClick(e));
+    // kamery ze zdjęciami
+    this.el.cameras.addEventListener('click', (e) => {
+      if (e.target.closest('[data-cam-add]')) { $('file-campic').click(); return; }
+      const it = e.target.closest('[data-cam]');
+      if (it) { if (this.mode !== 'furniture') this.setMode('furniture'); this.select({ kind: 'camera', id: it.dataset.cam }); }
+    });
+    $('file-campic').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (file) await this.addCameraPhoto(file);
+    });
+    $('file-photo').addEventListener('change', async (e) => {
+      const files = [...e.target.files];
+      e.target.value = '';
+      const s = this.selected();
+      if (!s || !s.f || !files.length) return;
+      for (const file of files) {
+        try {
+          const img = await loadImageFile(file);
+          s.f.photos = s.f.photos || [];
+          s.f.photos.push(addMedia(this.project, img.data, img));
+        } catch (err) { this.toast(err.message, true); }
+      }
+      this.lastPropsKey = null;
+      this.commit();
+      this.toast(`Dodano zdjęcia: ${files.length}`);
+    });
+    $('match-opacity').addEventListener('input', (e) => { this.el.matchPhoto.style.opacity = e.target.value; });
+    $('match-fov').addEventListener('input', (e) => {
+      this.persp.fov = +e.target.value;
+      $('match-fov-val').textContent = `${e.target.value}°`;
+      this.persp.updateProjectionMatrix();
+    });
+    $('match-save').addEventListener('click', () => this.saveMatch());
+    $('match-cancel').addEventListener('click', () => this.exitMatch());
+    $('lightbox').addEventListener('click', () => { $('lightbox').hidden = true; });
+    $('btn-export-ai').addEventListener('click', () => this.exportAI());
     this.el.props.addEventListener('change', (e) => this.onPropChange(e));
     this.el.props.addEventListener('click', (e) => this.onPropClick(e));
   }
@@ -1063,6 +1248,8 @@ export class Editor {
     if (ctrl && (k === 'y' || k === 'Y')) { e.preventDefault(); this.redo(); return; }
     if (ctrl && (k === 'd' || k === 'D')) { e.preventDefault(); this.duplicateSelected(); return; }
     if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); this.deleteSelected(); return; }
+    if (k === 'Escape' && this.matchCam) { this.exitMatch(); return; }
+    if (this.matchCam) return;
     if (k === 'Escape') {
       if (this.mergePick) { this.mergePick = null; this.setMode('furniture'); return; }
       if (this.doorPick) { this.doorPick = null; this.setMode('walls'); return; }
@@ -1109,8 +1296,23 @@ export class Editor {
       </div>`;
   }
 
+  renderCameras() {
+    const cams = this.project.cameras || [];
+    const media = this.project.media || {};
+    const s = this.selection;
+    const items = cams.map((c) => `
+      <div class="cam-item ${s && s.kind === 'camera' && s.id === c.id ? 'selected' : ''}" data-cam="${c.id}">
+        ${c.mediaId && media[c.mediaId] ? `<img src="${media[c.mediaId].data}" alt="">` : '📷'}<span>${esc(c.name)}</span>
+      </div>`).join('');
+    this.el.cameras.innerHTML = `
+      <h3>Zdjęcia z perspektywą</h3>
+      ${items || '<p class="hint">Dodaj zdjęcie pokoju i ustaw, skąd było zrobione — kamera pojawi się na makiecie.</p>'}
+      <div class="btns"><button data-cam-add>📷 + Zdjęcie pomieszczenia</button></div>`;
+  }
+
   renderPanels() {
     this.renderVariants();
+    this.renderCameras();
     this.renderRoomList();
     this.renderIssues();
     this.renderVerify();
@@ -1273,6 +1475,21 @@ export class Editor {
           <button data-act="clearExtra">Odznacz</button>
           <button class="danger" data-act="del">🗑 Usuń zaznaczone</button>
         </div>`;
+    } else if (s && s.kind === 'camera' && sel && sel.cam) {
+      const cam = sel.cam;
+      const media = (this.project.media || {})[cam.mediaId];
+      html = `
+        <h2>📷 ${esc(cam.name)}</h2>
+        ${media ? `<img class="big-photo" src="${media.data}" data-photo="${cam.mediaId}" alt="">` : ''}
+        <div class="row"><span>Nazwa</span><input data-k="camName" value="${esc(cam.name)}"></div>
+        <div class="row"><span>Kąt widzenia</span>${num('camFov', cam.fov, 1, 'min="15" max="120"')}</div>
+        <div class="note">Pozycja: x ${cm(cam.pos[0])}, wys. ${cm(cam.pos[1])}, z ${cm(cam.pos[2])} cm. Różowy ostrosłup na makiecie pokazuje, skąd i w którą stronę zrobiono zdjęcie.</div>
+        <div class="row"><span>Opis</span><textarea data-k="camNotes" placeholder="np. widok od drzwi na okno">${esc(cam.notes)}</textarea></div>
+        <div class="btns">
+          <button class="primary" data-act="camMatch">🎯 Dopasuj widok do zdjęcia</button>
+          <button data-act="camView">👁 Pokaż z tej kamery</button>
+          <button class="danger" data-act="camDel">Usuń</button>
+        </div>`;
     } else if (s && s.kind === 'furniture' && sel && sel.f) {
       const f = sel.f;
       const conf = this.conflicts.get(f.id) || [];
@@ -1319,6 +1536,15 @@ export class Editor {
         ${clear.length ? `<h3>Wolne miejsce wokół</h3><div class="clear-list">${clear.map((c) => `<span>${dirNames[c.dir]}</span><b>${fmtCm(c.dist)}</b>`).join('')}</div>` : ''}
         <h3>Inne</h3>
         <div class="row"><span>Kolor</span><input type="color" data-k="color" value="${esc(f.color)}"></div>
+        <div class="row"><span>Wygląd</span><select data-k="display">
+          <option value="" ${!f.display ? 'selected' : ''}>normalny</option>
+          <option value="transparent" ${f.display === 'transparent' ? 'selected' : ''}>półprzezroczysty</option>
+          <option value="edges" ${f.display === 'edges' ? 'selected' : ''}>tylko krawędzie</option>
+        </select></div>
+        <h3>Zdjęcia mebla</h3>
+        <div class="photos">${(f.photos || []).filter((id) => (this.project.media || {})[id]).map((id) => `<div class="ph"><img src="${this.project.media[id].data}" data-photo="${id}" alt=""><button data-rmphoto="${id}" title="Usuń zdjęcie">×</button></div>`).join('') || '<span class="note">Brak. Dodaj zdjęcie, żeby było wiadomo, jaki to mebel (także mebel, którego jeszcze nie ma).</span>'}</div>
+        <div class="btns"><button data-act="addPhoto">📷 + Dodaj zdjęcie</button></div>
+        <div class="row"><span>Link</span><input data-k="link" type="url" placeholder="https://… (sklep, producent)" value="${esc(f.link || '')}"></div>
         <div class="row"><span>Ukryty</span><label><input type="checkbox" data-k="hidden" ${f.hidden ? 'checked' : ''}> tymczasowy / poza makietą</label></div>
         <div class="row"><span>Potwierdzony</span><label><input type="checkbox" data-k="verified" ${f.verified ? 'checked' : ''}> typ sprawdzony</label></div>
         <div class="row"><span>Notatki</span><textarea data-k="notes">${esc(f.notes)}</textarea></div>
@@ -1417,6 +1643,15 @@ export class Editor {
     if (!sel) return;
     const v = t.type === 'checkbox' ? t.checked : t.value;
     const m = (x) => { const n = parseFloat(String(x).replace(',', '.')); return isFinite(n) ? n / 100 : null; };
+    if (s.kind === 'camera') {
+      const cam = sel.cam;
+      if (k === 'camName') cam.name = String(v).trim() || cam.name;
+      if (k === 'camFov') { const n = parseFloat(v); if (isFinite(n)) cam.fov = Math.min(120, Math.max(15, n)); }
+      if (k === 'camNotes') cam.notes = v;
+      this.lastPropsKey = null;
+      this.commit();
+      return;
+    }
     if (s.kind === 'furniture') {
       const f = sel.f;
       switch (k) {
@@ -1438,6 +1673,8 @@ export class Editor {
         case 'hidden': f.hidden = v; break;
         case 'verified': f.verified = v; break;
         case 'notes': f.notes = v; break;
+        case 'link': f.link = String(v).trim(); break;
+        case 'display': f.display = v || undefined; break;
         default: return;
       }
     } else if (s.kind === 'edge') {
@@ -1472,6 +1709,14 @@ export class Editor {
   }
 
   onPropClick(e) {
+    const ph = e.target.closest('[data-photo]');
+    if (ph) { this.showPhoto(ph.dataset.photo); return; }
+    const rm = e.target.closest('[data-rmphoto]');
+    if (rm) {
+      const s0 = this.selected();
+      if (s0 && s0.f) { s0.f.photos = (s0.f.photos || []).filter((id) => id !== rm.dataset.rmphoto); pruneMedia(this.project); this.lastPropsKey = null; this.commit(); }
+      return;
+    }
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const act = b.dataset.act;
@@ -1489,6 +1734,24 @@ export class Editor {
       case 'dup': this.duplicateSelected(); break;
       case 'merge': this.mergeSelected(); break;
       case 'mergePick': this.startMergePick(); break;
+      case 'addPhoto': document.getElementById('file-photo').click(); break;
+      case 'camMatch': this.enterMatch(sel.cam); break;
+      case 'camView': {
+        const cam = sel.cam;
+        if (this.view !== '3d') this.setView('3d');
+        this.persp.position.set(...cam.pos);
+        this.controls3d.target.set(...cam.target);
+        this.persp.fov = cam.fov;
+        this.persp.updateProjectionMatrix();
+        this.toast('Widok z kamery. Obróć myszą, aby wyjść z tego ujęcia.');
+        break;
+      }
+      case 'camDel':
+        this.project.cameras = (this.project.cameras || []).filter((c) => c.id !== sel.cam.id);
+        pruneMedia(this.project);
+        this.selection = null;
+        this.commit();
+        break;
       case 'shapeBox': this.applyShapeChoice('box'); break;
       case 'shapeScan': this.applyShapeChoice('scan'); break;
       case 'linkDoor': this.startDoorPick(); break;

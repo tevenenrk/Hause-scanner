@@ -22,6 +22,11 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - [x] Łączenie drzwi między pokojami (ustawia pokoje względem siebie).
 - [x] Makieta: chwytanie ręką (grip / szczypnięcie), skalowanie dwiema rękami.
 - [x] Kształt ze skanu (mapa wysokości z trójkątów → bryła złożona) jako alternatywa dla prostopadłościanu.
+- [x] Wybór przy skanie: zapisany skan z gogli albo skan od nowa.
+- [x] Wygląd w goglach: ściany/meble pełne, półprzezroczyste (regulowane krycie) lub krawędzie; wygląd per mebel.
+- [x] Uchwyty zmiany wymiarów w goglach, ±10 cm, miarka w goglach, „Nowa bryła”.
+- [x] Spacer wirtualny także w MR, teleport jak w grach VR.
+- [x] Zdjęcia i link przy meblach, kamery zdjęć z dopasowaniem widoku, paczka ZIP dla AI (zdjęcie + render z tej samej kamery).
 - [ ] Łączenie drzwi także w goglach (na razie na PC).
 
 ## Etap 2 — całe mieszkanie
@@ -37,7 +42,8 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - Uwaga: mapa robota jest 2D i widzi tylko podłogę pod meblami do wysokości robota — dobrze uzupełnia skan Questa (obrys), ale nie zastąpi wysokości ani mebli.
 
 ## Etap 4 — zdjęcia i tekstury
-- [ ] Dodawanie zdjęć pokoi do projektu: z telefonu albo automatycznie w trakcie skanu przez WebXR `camera-access` (działa w projekcie `tevenenrk/room-scanner`: `src/photo-capture.js` i `src/photo-texture.js`, do przeniesienia).
+- [x] Zdjęcia mebli i zdjęcia pomieszczeń z pozycją kamery (PC) + paczka dla AI.
+- [ ] Zdjęcia robione w goglach: z telefonu albo automatycznie w trakcie skanu przez WebXR `camera-access` (działa w projekcie `tevenenrk/room-scanner`: `src/photo-capture.js` i `src/photo-texture.js`, do przeniesienia).
 - [ ] Claude (vision) rozpoznaje materiały i kolory: ściany, podłoga (panele / płytki), fronty mebli → przypisanie materiałów do elementów modelu.
 - [ ] Tekstury: kafelkowalne tekstury podłóg/ścian (generowane lub z biblioteki PBR), kolor/tekstura mebli na podstawie zdjęć.
 - [ ] Opcjonalnie: dokładniejsze modele wybranych mebli (fotogrametria / Gaussian splatting z telefonu) wstawiane w miejsce bryłek.

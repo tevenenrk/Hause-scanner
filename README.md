@@ -8,6 +8,7 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 
 **Skan (na Queście)**
 - odczytuje pokój z systemowej **Konfiguracji przestrzeni (Space Setup)**: podłogę, ściany, sufit, drzwi, okna i meble,
+- na starcie pyta: **użyć skanu zapisanego w goglach** czy **zeskanować od nowa** (Space Setup jest ustawieniem Questa wspólnym dla wszystkich projektów, więc bez tego nowy projekt dostawał stary skan),
 - **pokazuje na żywo trójkąty skanu** (siatkę Space Setup), płaszczyzny i bryły mebli. Tam, gdzie nie ma trójkątów, pokój nie jest zeskanowany,
 - działa w trybie **bez granicy** (przestrzeń `unbounded` przeglądarki Questa), więc możesz chodzić po mieszkaniu. Gdy gogle go nie udostępnią, aplikacja wraca do zwykłego trybu z granicą,
 - zamienia skan na prosty model: obrys pokoju, wysokość, otwory i meble jako bryłki,
@@ -34,7 +35,17 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - panel 3D: obrót, wymiary ±1/±5 cm, dosuwanie do ściany, typ, **scalanie** („Scal z…”, potem wskazujesz drugą bryłę), duplikowanie, ukrywanie, usuwanie, cofanie, dodawanie mebli,
 - **🏠 Makieta w goglach**: miniatura mieszkania przed Tobą. **Grip** (albo szczypnięcie poza meblem) chwyta makietę ręką: przenosisz ją i obracasz. **Obie ręce naraz**: rozsuwanie dłoni powiększa, zsuwanie zmniejsza. Gałka też obraca i skaluje. Meble chwytasz i przesuwasz także w miniaturze,
 - trójkąty skanu na żywo (można wyłączyć),
+- **👁 Wygląd**: ściany wyłączone, tylko krawędzie, półprzezroczyste (krycie 10–75%) albo pełne; meble jako bryły (krycie 20–100%) albo krawędzie; podłoga wł./wył. W MR domyślnie ściany są półprzezroczyste, a meble pełne. Każdy mebel ma własny wygląd (normalny / półprzezroczysty / krawędzie / ukryty),
+- **zmiana wymiarów uchwytami**: zaznaczony mebel ma trzy kulki: czerwoną (szerokość), niebieską (głębokość) i zieloną (wysokość). Chwyć spustem i ciągnij, a przeciwległa ściana bryły zostaje w miejscu. Do tego przyciski ±1 / ±5 / ±10 cm,
+- **📏 Miarka**: dwa punkty spustem (mebel, ściana, podłoga, trójkąty skanu). W makiecie mierzy w prawdziwej skali,
+- **+ Nowa bryła**: prostopadłościan do budowania nowych elementów; bryły sklejasz „Scal z…” (suma brył),
+- **🚶 Spacer wirtualny**: także w MR. Chodzisz po makiecie jak w grach VR (lewa gałka: ruch, prawa: obrót o 30°, prawa do przodu: teleport). „Wróć do 1:1 w pokoju” ponownie nakłada model na prawdziwe mieszkanie,
 - **pełne parametry w goglach** („Więcej…”): kształt, wysokość nad podłogą, przesuwanie o 1 cm, kolor, „Jak w skanie”, potwierdzenie, rozdzielanie brył, wolne miejsce wokół (linie z odległościami), lista ukrytych mebli, wersje układu.
+
+**Zdjęcia, kamery i paczka dla AI (PC)**
+- do każdego mebla możesz przypiąć **zdjęcia** i **link** (np. do sklepu). Mebel, którego jeszcze nie ma, to nowa bryła ze zdjęciem; w paczce dla AI ma status „nowy / planowany”,
+- **📷 + Zdjęcie pomieszczenia** tworzy na makiecie **kamerę** (różowy ostrosłup). W trybie „Dopasuj widok do zdjęcia” zdjęcie leży półprzezroczyście na makiecie, a Ty ustawiasz widok i kąt widzenia, aż bryły pokryją się ze zdjęciem. Pozycja kamery jest zapisywana,
+- **Plik → Eksport: paczka dla AI (ZIP)**: `README_dla_AI.md` (polecenie i opis), `scena.json`, plan z góry, widok 3D, każde zdjęcie pomieszczenia razem z **renderem makiety z tej samej pozycji kamery**, zdjęcia mebli, `model.glb`, projekt. Paczkę wrzucasz do AI (np. Claude), żeby zrobiła dokładniejszą makietę albo wizualizację, wiedząc, gdzie co stoi i jak wygląda.
 
 **Gotowy model w VR (bez bycia w mieszkaniu)**
 - przycisk **🥽 Makieta VR** otwiera pełny VR z gotowym modelem: najpierw makieta przed Tobą,
