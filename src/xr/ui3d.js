@@ -100,12 +100,25 @@ export class Panel3D {
         danger: ['#7a2424', '#a33434'],
         active: ['#c99a00', '#e0b000'],
         muted: ['#2a3038', '#3a424d'],
+        tab: ['#232a33', '#323b47'],
+        tabActive: ['#2f6fde', '#4a86f0'],
       }[b.style] || ['#353d48', '#4a5563'];
-      roundRect(ctx, b.x, b.y, b.w, b.h, 18);
-      ctx.fillStyle = hover ? colors[1] : colors[0];
+      roundRect(ctx, b.x, b.y, b.w, b.h, b.style && b.style.startsWith('tab') ? 12 : 18);
+      // przycisk-próbka koloru: wypełniony kolorem, zaznaczony grubą ramką
+      ctx.fillStyle = b.color ? b.color : hover ? colors[1] : colors[0];
       ctx.globalAlpha = b.disabled ? 0.4 : 1;
       ctx.fill();
-      ctx.fillStyle = '#ffffff';
+      if (b.color && (b.selected || hover)) {
+        ctx.lineWidth = b.selected ? 10 : 5;
+        ctx.strokeStyle = b.selected ? '#ffffff' : 'rgba(255,255,255,0.6)';
+        ctx.stroke();
+      }
+      if (b.style === 'tabActive') {
+        ctx.fillStyle = '#ffd400';
+        ctx.fillRect(b.x + 14, b.y + b.h - 8, b.w - 28, 6);
+      }
+      if (b.color && !b.label) { ctx.globalAlpha = 1; continue; }
+      ctx.fillStyle = b.color ? (isLight(b.color) ? '#111111' : '#ffffff') : '#ffffff';
       ctx.font = `${b.label.length > 16 ? 26 : 32}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -137,6 +150,14 @@ export class Panel3D {
     }
     return !!b;
   }
+}
+
+function isLight(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150;
 }
 
 function roundRect(ctx, x, y, w, h, r) {

@@ -203,7 +203,8 @@ export class ApartmentView {
     const op = look.wallStyle === 'solid' ? 1 : look.wallStyle === 'edges' ? 0 : look.wallOpacity;
     const mat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.9, transparent: op < 1, opacity: op, depthWrite: op >= 1, colorWrite: op > 0 });
     const edge = new THREE.LineBasicMaterial({ color: 0x00d0ff, transparent: true, opacity: look.wallStyle === 'edges' ? 0.95 : 0.35 });
-    this.wallLookCache = { key: JSON.stringify(look), mat, edge, edges: look.wallStyle === 'edges' || look.wallStyle === 'transparent' };
+    const selMat = new THREE.MeshStandardMaterial({ color: 0xffd400, transparent: true, opacity: 0.55, depthWrite: false, emissive: 0x806a00 });
+    this.wallLookCache = { key: JSON.stringify(look), mat, selMat, edge, edges: look.wallStyle === 'edges' || look.wallStyle === 'transparent' };
     return this.wallLookCache;
   }
 
@@ -213,7 +214,7 @@ export class ApartmentView {
     const sel = this.options.selection;
     const selected = sel && sel.kind === 'edge' && sel.roomId === room.id && sel.index === i;
     const wl = this.wallLook;
-    const mat = selected ? this.materials.wallSel : wl ? wl.mat : this.materials.wall;
+    const mat = selected ? (wl ? wl.selMat : this.materials.wallSel) : wl ? wl.mat : this.materials.wall;
     const ops = (room.openings || []).filter((o) => o.edge % room.outline.length === i)
       .map((o) => ({ o, s: Math.max(0, Math.min(o.offset, e.length)), t: Math.min(e.length, o.offset + o.width) }))
       .sort((a, b) => a.s - b.s);

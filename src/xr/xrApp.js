@@ -10,10 +10,10 @@ import { checkRoom, verdictText } from '../scanCheck.js';
 import { ApartmentView } from '../roomView.js';
 import {
   computeConflicts, snapToWalls, normalizeAngle, rad, polygonCentroid, alignRotationToNearestWall, worldToRoom, roomToWorld,
-  polygonArea, roomContainsWorldPoint, localToWorld, mountOf, attachToWall,
+  polygonArea, roomContainsWorldPoint, localToWorld, mountOf, attachToWall, moveEdge, edgeOf,
 } from '../geometry.js';
 import {
-  History, createFurniture, findFurniture, uid, mergeFurniture, splitFurniture, resizeFurniture,
+  History, createFurniture, createOpening, findFurniture, uid, mergeFurniture, splitFurniture, resizeFurniture,
   ensureVariants, activeVariant, switchVariant, createVariant, deleteVariant,
 } from '../model.js';
 import { computeClearances } from '../geometry.js';
@@ -82,7 +82,10 @@ export class XRApp {
     this.onSave = o.onSave;
     this.history = new History(this.project);
     this.isVR = o.mode === 'vr';
-    this.state = o.mode === 'scan' ? 'scan' : 'edit';
+    // edycja/VR zaczyna się od ekranu wyboru trybu i wersji
+    this.state = o.mode === 'scan' ? 'scan' : 'start';
+    this.tab = 'furniture';
+    this.selWall = null;
     this.walkRoot = null;
     this.mergeReturn = null;
     this.turnCooldown = 0;
@@ -165,7 +168,7 @@ export class XRApp {
     this.root.add(this.holesGroup);
     this.buildGuide();
 
-    this.panel = new Panel3D({ width: 0.4 });
+    this.panel = new Panel3D({ width: 0.46 });
     this.panel.onAction = (id) => this.onPanelAction(id);
     scene.add(this.panel.mesh);
     this.panelPlaced = false;
@@ -184,6 +187,7 @@ export class XRApp {
       this.anchorRoomId = this.preferredRoomId || (this.project.rooms[0] && this.project.rooms[0].id);
       this.needDollPlace = true;
       this.enterDollhouse();
+      this.state = 'start';
     }
     this.updatePanel();
   }
@@ -411,23 +415,32 @@ export class XRApp {
       mergeStart: () => { this.mergeReturn = this.state === 'verify' ? 'verify' : null; this.state = 'merge'; this.updatePanel(); },
       more: () => { this.state = 'more'; this.updatePanel(); },
       colors: () => { this.state = 'colors'; this.updatePanel(); },
-      setColor: () => { const s = this.sel(); if (s) { s.f.color = arg === 'type' ? typeColor(s.f.type) : arg; this.state = 'more'; this.commit(); } },
+      setColor: () => { const s = this.sel(); if (s) { s.f.color = arg === 'type' ? typeColor(s.f.type) : arg; if (this.state === 'colors') this.state = 'edit'; this.commit(); } },
       shape: () => this.cycleShape(),
       split: () => { const parts = splitFurniture(this.project, this.selectedId); if (parts.length) { this.selectedId = parts[0].id; this.state = 'edit'; this.commit(); } },
       elev: () => { const s = this.sel(); if (s) { s.f.y = Math.max(0, (s.f.y || 0) + parseFloat(arg) / 100); this.commit(); } },
       nudge: () => this.nudgeSelected(arg),
       resetScan: () => { const s = this.sel(); if (s && s.f.scanned) { Object.assign(s.f, s.f.scanned); this.commit(); } },
       verified: () => { const s = this.sel(); if (s) { s.f.verified = !s.f.verified; this.commit(); } },
-      variants: () => { this.state = 'variants'; this.updatePanel(); },
-      varSwitch: () => { switchVariant(this.project, arg); this.selectedId = null; this.state = 'edit'; this.commit(); },
-      varNew: () => { createVariant(this.project); this.selectedId = null; this.state = 'edit'; this.commit(); },
-      varDel: () => { deleteVariant(this.project, this.project.activeVariantId); this.selectedId = null; this.state = 'variants'; this.commit(); },
+      variants: () => { this.tab = 'versions'; this.state = 'edit'; this.selectedId = null; this.refresh(); },
+      varSwitch: () => { switchVariant(this.project, arg); this.selectedId = null; if (this.state !== 'start') this.state = 'edit'; this.commit(); },
+      varNew: () => { createVariant(this.project); this.selectedId = null; if (this.state !== 'start') this.state = 'edit'; this.commit(); },
+      varDel: () => { deleteVariant(this.project, this.project.activeVariantId); this.selectedId = null; this.state = 'edit'; this.commit(); },
       hidden: () => { this.state = 'hidden'; this.updatePanel(); },
       unhide: () => { const s = findFurniture(this.project, arg); if (s) { s.f.hidden = false; this.selectedId = s.f.id; this.state = 'edit'; this.commit(); } },
       verifyAll: () => this.nextVerify(),
       rooms: () => { this.state = 'rooms'; this.updatePanel(); },
       goRoom: () => { this.state = 'edit'; if (this.dollhouse) this.dollhouse = false; this.enterWalk(arg); },
       exitWalk: () => this.exitWalk(),
+      tab: () => { this.tab = arg; this.state = 'edit'; if (arg === 'walls') this.selectedId = null; if (arg !== 'walls') this.selWall = null; this.refresh(); },
+      start: () => { if (arg === 'menu') { this.state = 'start'; this.selectedId = null; this.selWall = null; this.refresh(); } else this.chooseMode(arg); },
+      modeMR: () => { if (this.dollhouse) this.exitDollhouse(); else if (this.walking) this.exitWalk(); this.tab = 'mode'; this.refresh(); },
+      modeDoll: () => { this.enterDollhouse(); this.tab = 'mode'; this.refresh(); },
+      modeWalk: () => this.chooseMode('walk'),
+      wallMove: () => this.moveSelectedWall(parseFloat(arg) / 100),
+      wallOpening: () => this.addOpeningOnWall(arg),
+      wallDeselect: () => { this.selWall = null; this.refresh(); },
+      roomHeight: () => { const r = this.selWall && this.project.rooms.find((x) => x.id === this.selWall.roomId); if (r) { r.height = Math.max(1.8, Math.round((r.height + parseFloat(arg) / 100) * 100) / 100); this.commit(); } },
       floorAdj: () => this.adjustFloor(parseFloat(arg) / 100),
       mount: () => { const s0 = this.sel(); if (s0) { s0.f.mount = arg; if (arg === 'wall') { const a = attachToWall(s0.room, s0.f, 2); if (a) Object.assign(s0.f, a); if (!s0.f.y) s0.f.y = 1.2; } else s0.f.y = 0; this.commit(); } },
       liveMesh: () => { const st = this.liveStyle(); st.mesh = parseFloat(arg); this.showMesh = st.mesh > 0; this.live.setStyle(st); this.saveLook(); },
@@ -436,7 +449,7 @@ export class XRApp {
       check: () => this.openCheck(),
       issue: () => this.gotoIssue(+arg),
       checkBack: () => { this.state = this.checkReturn || 'edit'; if (this.state !== 'scan') this.holesGroup.clear(); this.refresh(); },
-      look: () => { this.state = 'look'; this.updatePanel(); },
+      look: () => { this.tab = 'view'; this.state = 'edit'; this.selectedId = null; this.refresh(); },
       lookWall: () => { this.lookFor().wallStyle = arg; this.saveLook(); },
       lookWallOp: () => { const l = this.lookFor(); l.wallOpacity = parseFloat(arg); if (l.wallStyle !== 'transparent') l.wallStyle = 'transparent'; this.saveLook(); },
       lookFurn: () => { this.lookFor().furnStyle = arg; this.saveLook(); },
@@ -454,7 +467,7 @@ export class XRApp {
       alignReset: () => { const r = this.anchorRoom(); if (r) { r.xrAlign = { x: 0, z: 0, rot: 0 }; this.aligned = false; this.commit(); } },
       back: () => {
         if (this.state === 'merge' && this.mergeReturn === 'verify') this.state = 'verify';
-        else if (this.state === 'colors') this.state = 'more';
+        else if (this.state === 'colors') this.state = 'edit';
         else this.state = 'edit';
         this.mergeReturn = null;
         this.refresh();
@@ -640,9 +653,9 @@ export class XRApp {
     }
     if (st === 'colors' && found) {
       const rows = [];
-      for (let i = 0; i < PALETTE.length; i += 4) rows.push(PALETTE.slice(i, i + 4).map((c) => ({ id: `setColor:${c}`, label: c === found.f.color ? `● ${c}` : c, style: c === found.f.color ? 'active' : undefined })));
-      rows.push([{ id: 'setColor:type', label: 'Kolor typu' }, { id: 'back', label: '← Wróć', style: 'muted' }]);
-      return { title: 'Kolor mebla', lines: [], rows };
+      for (let i = 0; i < PALETTE.length; i += 6) rows.push(PALETTE.slice(i, i + 6).map((c) => ({ id: `setColor:${c}`, label: '', color: c, selected: c.toLowerCase() === String(found.f.color).toLowerCase() })));
+      rows.push([{ id: 'setColor:type', label: 'Kolor typu mebla', color: typeColor(found.f.type) }, { id: 'back', label: '← Wróć', style: 'muted' }]);
+      return { title: `Kolor: ${found.f.name}`, lines: ['Wybierz kolor — zaznaczony ma białą ramkę.'], rows };
     }
     if (st === 'variants') {
       const vs = ensureVariants(this.project);
@@ -684,79 +697,206 @@ export class XRApp {
             : 'Przesuwanie: trzymaj spust na meblu. Gałka przód/tył: dalej/bliżej, w bok: obrót. Kulki na bryle zmieniają wymiary.',
         ],
         rows: [
-          [{ id: 'type', label: `Typ: ${typeName(f.type)} ▸`, style: 'primary' }, { id: 'mount:floor', label: 'Stoi na podłodze', style: mountOf(f) === 'floor' ? 'active' : undefined }, { id: 'mount:wall', label: 'Wisi na ścianie', style: mountOf(f) === 'wall' ? 'active' : undefined }],
-          [{ id: 'rot:90', label: '⟲ 90°' }, { id: 'rot:15', label: '⟲ 15°' }, { id: 'rot:-15', label: '⟳ 15°' }, { id: 'rot:-90', label: '⟳ 90°' }],
-          [dimLabel('w', `Szer. ${cmTxt(f.w)}`), dimLabel('d', `Głęb. ${cmTxt(f.d)}`), dimLabel('h', `Wys. ${cmTxt(f.h)}`)],
+          [{ id: 'type', label: `Typ: ${typeName(f.type)} ▸`, style: 'primary' }, { id: 'mount:floor', label: '▁ Na podłodze', style: mountOf(f) === 'floor' ? 'active' : undefined }, { id: 'mount:wall', label: '▕ Na ścianie', style: mountOf(f) === 'wall' ? 'active' : undefined }],
+          [{ id: 'rot:90', label: '⟲ 90°' }, { id: 'rot:15', label: '⟲ 15°' }, { id: 'rot:-15', label: '⟳ 15°' }, { id: 'rot:-90', label: '⟳ 90°' }, { id: 'alignWall', label: '∥ do ściany' }],
+          [dimLabel('w', `↔ Szer. ${cmTxt(f.w)}`), dimLabel('d', `↕ Głęb. ${cmTxt(f.d)}`), dimLabel('h', `⇕ Wys. ${cmTxt(f.h)}`)],
           [{ id: 'dimAdd:-10', label: '−10' }, { id: 'dimAdd:-5', label: '−5' }, { id: 'dimAdd:-1', label: '−1' }, { id: 'dimAdd:1', label: '+1' }, { id: 'dimAdd:5', label: '+5' }, { id: 'dimAdd:10', label: '+10' }],
-          [{ id: 'snap', label: 'Dosuń do ściany' }, { id: 'alignWall', label: 'Równolegle do ściany' }],
-          [{ id: 'mergeStart', label: 'Scal z…' }, { id: 'dup', label: 'Duplikuj' }],
-          [{ id: 'display:normal', label: 'Wygląd: normalny', style: !f.display ? 'active' : undefined }, { id: 'display:transparent', label: 'Półprzezroczysty', style: f.display === 'transparent' ? 'active' : undefined }, { id: 'display:edges', label: 'Krawędzie', style: f.display === 'edges' ? 'active' : undefined }],
-          [{ id: 'more', label: 'Więcej… (kształt, wysokość, kolor)' }],
-          [{ id: 'hide', label: 'Ukryj' }, { id: 'del', label: 'Usuń', style: 'danger' }],
-          [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'deselect', label: 'Gotowe', style: 'primary' }],
+          [...PALETTE.slice(0, 5).map((c) => ({ id: `setColor:${c}`, label: '', color: c, selected: c.toLowerCase() === String(f.color).toLowerCase() })), { id: 'colors', label: 'Więcej kolorów' }],
+          [{ id: 'display:normal', label: 'Pełny', style: !f.display ? 'active' : undefined }, { id: 'display:transparent', label: 'Półprzezr.', style: f.display === 'transparent' ? 'active' : undefined }, { id: 'display:edges', label: 'Krawędzie', style: f.display === 'edges' ? 'active' : undefined }, { id: 'hide', label: 'Ukryj' }],
+          [{ id: 'snap', label: '⇥ Dosuń' }, { id: 'mergeStart', label: '⧉ Scal z…' }, { id: 'dup', label: '⧉ Duplikuj' }, { id: 'more', label: 'Więcej…' }],
+          [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'del', label: '🗑 Usuń', style: 'danger' }, { id: 'deselect', label: '✓ Gotowe', style: 'primary' }],
         ],
       };
     }
-    const hiddenCount = this.project.rooms.reduce((n, r) => n + r.furniture.filter((f) => f.hidden).length, 0);
-    const unverCount = this.unverified().length;
-    const variantRow = [
-      { id: 'variants', label: `Wersja: ${activeVariant(this.project).name}` },
-      { id: 'hidden', label: `Ukryte (${hiddenCount})`, disabled: !hiddenCount },
+    if (st === 'start') return this.buildStartPage();
+    if (this.selWall && this.tab === 'walls') return this.buildWallPage();
+    return this.buildTabPage();
+  }
+
+  // ======================= menu: start i zakładki =======================
+  modeName() {
+    if (this.dollhouse) return '🧱 Makieta';
+    if (this.walking) return '🚶 Spacer wirtualny';
+    return this.isVR ? 'VR' : '🏠 W mieszkaniu (MR 1:1)';
+  }
+
+  variantRows(perRow = 3) {
+    const vs = ensureVariants(this.project);
+    const btns = vs.map((v) => ({ id: `varSwitch:${v.id}`, label: v.name, style: v.id === this.project.activeVariantId ? 'tabActive' : 'tab' }));
+    const rows = [];
+    for (let i = 0; i < btns.length; i += perRow) rows.push(btns.slice(i, i + perRow));
+    return rows;
+  }
+
+  buildStartPage() {
+    const modes = [
+      ...(!this.isVR ? [[{ id: 'start:mr', label: '🏠 Jestem w mieszkaniu — model na prawdziwych pokojach', style: 'primary' }]] : []),
+      [{ id: 'start:doll', label: '🧱 Makieta — miniatura do przestawiania mebli', style: this.isVR ? 'primary' : undefined }],
+      [{ id: 'start:walk', label: '🚶 Spacer wirtualny — chodzę po modelu jak w grze' }],
     ];
-    if (unverCount) variantRow.push({ id: 'verifyAll', label: `Do potwierdzenia (${unverCount})` });
-    const toolRow = [{ id: 'newBox', label: '+ Nowa bryła' }, { id: 'measure', label: '📏 Miarka' }, { id: 'look', label: '👁 Wygląd' }, { id: 'check', label: '✔ Kontrola' }];
-    if (this.dollhouse) {
-      return {
-        title: 'Makieta mieszkania',
-        lines: [
-          `Skala 1:${Math.round(1 / this.doll.scale)}. Gałka: lewo/prawo obraca, góra/dół zmienia wielkość.`,
-          'Grip (albo szczypnięcie poza meblem) chwyta makietę: przenosisz i obracasz ręką. Obie ręce naraz: rozsuwanie dłoni powiększa, zsuwanie zmniejsza. Meble chwytasz spustem jak zwykle.',
-        ],
-        rows: [
-          [{ id: 'dollRot:45', label: '⟲ 45°' }, { id: 'dollRot:-45', label: '⟳ 45°' }, { id: 'dollScale:0.8', label: '− Mniejsza' }, { id: 'dollScale:1.25', label: '+ Większa' }],
-          [{ id: 'dollHere', label: 'Przed siebie' }, { id: 'add', label: '+ Dodaj mebel' }],
-          toolRow,
-          [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
-          variantRow,
-          this.isVR
-            ? [{ id: 'rooms', label: '🚶 Spacer 1:1 (wybierz pokój)', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }]
-            : [{ id: 'rooms', label: '🚶 Spacer wirtualny' }, { id: 'dollExit', label: 'Wróć do 1:1 w pokoju', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }],
-        ],
-      };
-    }
-    // spacer po makiecie (jak w grach VR)
-    if (this.walking) {
-      return {
-        title: 'Spacer po mieszkaniu',
-        lines: ['Lewa gałka: chodzenie. Prawa gałka: w bok = obrót o 30°, do przodu = celowanie teleportem (puść, aby się przenieść). Spust na meblu: przesuwanie. Grip przywołuje panel.'],
-        rows: [
-          [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
-          [{ id: 'add', label: '+ Dodaj mebel' }, { id: 'rooms', label: 'Przejdź do pokoju' }],
-          toolRow,
-          variantRow,
-          this.isVR
-            ? [{ id: 'doll', label: '🏠 Makieta' }, { id: 'exit', label: 'Zapisz i wyjdź', style: 'primary' }]
-            : [{ id: 'doll', label: '🏠 Makieta' }, { id: 'exitWalk', label: 'Wróć do 1:1 w pokoju', style: 'primary' }, { id: 'exit', label: 'Zapisz i wyjdź' }],
-        ],
-      };
-    }
-    // edycja — menu główne
-    const anchor = this.anchorRoom();
     return {
-      title: `Edycja w MR${anchor ? ' — ' + anchor.name : ''}`,
-      lines: [
-        'Chwyć mebel spustem (lub szczypnięciem) i prowadź promieniem. Gałka przód/tył: dalej/bliżej, w bok: obrót. Grip przywołuje panel.',
-        this.alignInfo || '',
-      ].filter(Boolean),
+      title: 'Co chcesz zrobić?',
+      lines: [`Projekt: ${this.project.name}. Wybierz wersję układu mebli (każda wersja to osobne przemeblowanie), a potem tryb.`],
       rows: [
-        [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo }],
-        [{ id: 'add', label: '+ Dodaj mebel' }, { id: 'align', label: 'Wyrównaj model' }],
-        toolRow,
-        [{ id: 'mesh', label: this.showMesh ? 'Trójkąty skanu: wł.' : 'Trójkąty skanu: wył.', style: this.showMesh ? 'active' : undefined }, { id: 'doll', label: '🏠 Makieta' }, { id: 'rooms', label: '🚶 Spacer wirtualny' }],
-        variantRow,
-        [{ id: 'exit', label: 'Zapisz i wyjdź', style: 'primary' }],
+        ...this.variantRows(3),
+        [{ id: 'varNew', label: '+ Nowa wersja (kopia zaznaczonej)' }],
+        ...modes,
       ],
     };
+  }
+
+  chooseMode(mode) {
+    this.state = 'edit';
+    this.tab = 'furniture';
+    if (mode === 'doll') { if (!this.dollhouse) this.enterDollhouse(); else this.refresh(); return; }
+    if (mode === 'walk') {
+      if (this.project.rooms.length > 1) { this.state = 'rooms'; this.updatePanel(); return; }
+      this.enterWalk(this.project.rooms[0] && this.project.rooms[0].id);
+      return;
+    }
+    // MR 1:1
+    if (this.dollhouse) this.exitDollhouse(); else if (this.walking) this.exitWalk(); else this.refresh();
+  }
+
+  buildTabPage() {
+    const tabs = [['mode', 'Tryb'], ['furniture', 'Meble'], ['walls', 'Ściany'], ['view', 'Widok'], ['tools', 'Narzędzia'], ['versions', 'Wersje']];
+    const tab = this.tab || 'furniture';
+    const tabRow = tabs.map(([k, n]) => ({ id: `tab:${k}`, label: n, style: tab === k ? 'tabActive' : 'tab' }));
+    const bottom = [
+      { id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo },
+      { id: 'redo', label: '↷ Ponów', disabled: !this.history.canRedo },
+      { id: 'exit', label: '💾 Zapisz i wyjdź', style: 'primary' },
+    ];
+    const status = `${this.modeName()} · wersja: ${activeVariant(this.project).name}`;
+    const on = (c) => (c ? 'active' : undefined);
+    const hiddenCount = this.project.rooms.reduce((n, r) => n + r.furniture.filter((f) => f.hidden).length, 0);
+    const unverCount = this.unverified().length;
+    let title = '', lines = [status], rows = [];
+    if (tab === 'mode') {
+      title = 'Tryb';
+      rows.push([
+        ...(!this.isVR ? [{ id: 'modeMR', label: '🏠 W mieszkaniu', style: on(!this.dollhouse && !this.walking) }] : []),
+        { id: 'modeDoll', label: '🧱 Makieta', style: on(this.dollhouse) },
+        { id: 'modeWalk', label: '🚶 Spacer', style: on(this.walking) },
+      ]);
+      if (this.dollhouse) {
+        lines.push(`Skala 1:${Math.round(1 / this.doll.scale)}. Grip (albo szczypnięcie poza meblem) chwyta makietę ręką, obie ręce: rozsuwanie powiększa. Gałka: obrót i wielkość.`);
+        rows.push([{ id: 'dollRot:45', label: '⟲ 45°' }, { id: 'dollRot:-45', label: '⟳ 45°' }, { id: 'dollScale:0.8', label: '− Mniejsza' }, { id: 'dollScale:1.25', label: '+ Większa' }]);
+        rows.push([{ id: 'dollHere', label: 'Ustaw przed sobą' }]);
+      } else if (this.walking) {
+        lines.push('Lewa gałka: chodzenie. Prawa: w bok obrót o 30°, do przodu celowanie teleportem (puść, aby się przenieść).');
+        rows.push([{ id: 'rooms', label: 'Przejdź do pokoju ▸' }, { id: 'floorAdj:-5', label: 'Podłoga niżej 5 cm' }, { id: 'floorAdj:5', label: 'Podłoga wyżej 5 cm' }]);
+      } else {
+        lines.push(this.alignInfo || 'Model leży na prawdziwych pokojach. Jeśli jest przesunięty, użyj „Wyrównaj model”.');
+        rows.push([{ id: 'align', label: '⌖ Wyrównaj model' }]);
+      }
+    } else if (tab === 'furniture') {
+      title = 'Meble';
+      lines.push('Chwyć mebel spustem (lub szczypnięciem) i prowadź promieniem. Gałka przód/tył: dalej/bliżej, w bok: obrót. Kliknij mebel, żeby zmienić typ, wymiary, kolor.');
+      rows.push([{ id: 'newBox', label: '▢ + Nowa bryła' }, { id: 'add', label: '🛋 + Mebel z katalogu' }]);
+      rows.push([
+        { id: 'verifyAll', label: `❓ Do potwierdzenia (${unverCount})`, disabled: !unverCount },
+        { id: 'hidden', label: `👁 Ukryte (${hiddenCount})`, disabled: !hiddenCount },
+      ]);
+    } else if (tab === 'walls') {
+      title = 'Ściany';
+      lines.push('Wskaż ścianę spustem i ciągnij, żeby ją przesunąć (np. gdy skaner wziął szafę za ścianę). W tej zakładce meble są zablokowane.');
+    } else if (tab === 'view') {
+      const l = this.lookFor();
+      title = `Widok ${this.dollhouse || this.walking || this.isVR ? 'makiety' : 'w pokoju'}`;
+      rows.push([{ id: 'lookWall:off', label: 'Ściany: wył.', style: on(l.wallStyle === 'off') }, { id: 'lookWall:edges', label: 'Krawędzie', style: on(l.wallStyle === 'edges') }, { id: 'lookWall:transparent', label: 'Półprzezr.', style: on(l.wallStyle === 'transparent') }, { id: 'lookWall:solid', label: 'Pełne', style: on(l.wallStyle === 'solid') }]);
+      rows.push([0.1, 0.25, 0.5, 0.75].map((v) => ({ id: `lookWallOp:${v}`, label: `Ściany ${Math.round(v * 100)}%`, style: on(l.wallStyle === 'transparent' && Math.abs(l.wallOpacity - v) < 0.01) })));
+      rows.push([{ id: 'lookFurn:solid', label: 'Meble: bryły', style: on(l.furnStyle === 'solid') }, { id: 'lookFurn:edges', label: 'Meble: krawędzie', style: on(l.furnStyle === 'edges') }, { id: 'lookFloor', label: l.floor ? 'Podłoga: wł.' : 'Podłoga: wył.', style: on(l.floor) }]);
+      rows.push([1, 0.7, 0.4, 0.2].map((v) => ({ id: `lookFurnOp:${v}`, label: `Meble ${Math.round(v * 100)}%`, style: on(l.furnStyle === 'solid' && Math.abs(l.furnOpacity - v) < 0.01) })));
+      if (!this.isVR) {
+        rows.push([{ id: 'liveMesh:0', label: 'Trójkąty skanu: wył.', style: on(!this.showMesh) }, { id: 'liveMesh:0.2', label: 'słabe', style: on(this.showMesh && this.liveStyle().mesh <= 0.25) }, { id: 'liveMesh:0.45', label: 'wyraźne', style: on(this.showMesh && this.liveStyle().mesh > 0.25) }]);
+        rows.push([{ id: 'liveFurn', label: `Żółte bryły skanu: ${this.liveStyle().furniture ? 'wł.' : 'wył.'}`, style: on(this.liveStyle().furniture) }, { id: 'livePlanes', label: `Płaszczyzny skanu: ${this.liveStyle().planes ? 'wł.' : 'wył.'}`, style: on(this.liveStyle().planes) }]);
+      }
+    } else if (tab === 'tools') {
+      title = 'Narzędzia';
+      rows.push([{ id: 'measure', label: '📏 Miarka' }, { id: 'check', label: '✔ Kontrola skanu' }]);
+      if (!this.isVR && !this.dollhouse && !this.walking) rows.push([{ id: 'align', label: '⌖ Wyrównaj model do pokoju' }]);
+      rows.push([{ id: 'start:menu', label: '☰ Ekran startowy (tryb i wersja)' }]);
+    } else if (tab === 'versions') {
+      title = 'Wersje układu';
+      lines.push('Każda wersja to osobne ustawienie mebli w tym samym mieszkaniu. Zaczynasz od „Stan obecny”, potem „+ Nowa wersja” robi kopię bieżącej do przemeblowania.');
+      rows.push(...this.variantRows(3));
+      rows.push([{ id: 'varNew', label: '+ Nowa wersja (kopia bieżącej)', style: 'primary' }, { id: 'varDel', label: 'Usuń bieżącą', style: 'danger', disabled: ensureVariants(this.project).length <= 1 }]);
+    }
+    return { title, lines, rows: [tabRow, ...rows, bottom] };
+  }
+
+  // ======================= ściany w goglach =======================
+  buildWallPage() {
+    const r = this.project.rooms.find((x) => x.id === this.selWall.roomId);
+    if (!r) { this.selWall = null; return this.buildTabPage(); }
+    const e = edgeOf(r.outline, this.selWall.index);
+    return {
+      title: `Ściana ${this.selWall.index + 1} · ${r.name}`,
+      lines: [`Długość ${cmTxt(e.length)} cm, wysokość pokoju ${cmTxt(r.height)} cm. Ciągnij ścianę spustem albo użyj przycisków.`],
+      rows: [
+        [{ id: 'wallMove:-5', label: '→← Do środka 5' }, { id: 'wallMove:-1', label: 'Do środka 1' }, { id: 'wallMove:1', label: 'Na zewnątrz 1' }, { id: 'wallMove:5', label: '←→ Na zewnątrz 5' }],
+        [{ id: 'wallOpening:door', label: '🚪 + Drzwi tutaj' }, { id: 'wallOpening:window', label: '🪟 + Okno tutaj' }],
+        [{ id: 'roomHeight:-5', label: 'Pokój niższy 5 cm' }, { id: 'roomHeight:5', label: 'Pokój wyższy 5 cm' }],
+        [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'wallDeselect', label: '✓ Gotowe', style: 'primary' }],
+      ],
+    };
+  }
+
+  moveSelectedWall(offset) {
+    const r = this.selWall && this.project.rooms.find((x) => x.id === this.selWall.roomId);
+    if (!r) return;
+    r.outline = moveEdge(r.outline, this.selWall.index, offset);
+    this.commit();
+  }
+
+  addOpeningOnWall(type) {
+    const r = this.selWall && this.project.rooms.find((x) => x.id === this.selWall.roomId);
+    if (!r) return;
+    const e = edgeOf(r.outline, this.selWall.index);
+    const op = createOpening({ type, edge: this.selWall.index });
+    op.width = Math.min(op.width, Math.max(0.3, e.length - 0.1));
+    op.offset = Math.max(0, (e.length - op.width) / 2);
+    r.openings.push(op);
+    this.commit();
+  }
+
+  startWallDrag(c, hit) {
+    const { roomId, index } = hit.object.userData;
+    const room = this.project.rooms.find((x) => x.id === roomId);
+    if (!room) return;
+    this.selWall = { roomId, index };
+    const e = edgeOf(room.outline, index);
+    const rot = room.transform.rot || 0;
+    const ox = -e.inward[0], oz = -e.inward[1];
+    const ax = ox * Math.cos(rot) + oz * Math.sin(rot), az = -ox * Math.sin(rot) + oz * Math.cos(rot);
+    const dir = new THREE.Vector3(ax, 0, az).transformDirection(this.root.matrix);
+    const scale = new THREE.Vector3().setFromMatrixScale(this.root.matrix).x;
+    this.wallDrag = { c, roomId, index, outline0: room.outline.map((p) => [p[0], p[1]]), origin: hit.point.clone(), dir, scale, changed: false };
+    this.haptic(c, 0.4, 20);
+    this.refresh();
+  }
+
+  updateWallDrag() {
+    const d = this.wallDrag;
+    const room = this.project.rooms.find((x) => x.id === d.roomId);
+    if (!room) { this.wallDrag = null; return; }
+    const rc = this.rayFrom(d.c);
+    const o = rc.ray.origin, dr = rc.ray.direction, u = d.dir;
+    const w0 = d.origin.clone().sub(o);
+    const b = u.dot(dr), dd = u.dot(w0), e = dr.dot(w0);
+    const den = 1 - b * b;
+    if (den < 1e-4) return;
+    const off = Math.round((((b * e - dd) / den) / d.scale) * 100) / 100;
+    if (Math.abs(off - (d.last || 0)) < 0.005) return;
+    d.last = off;
+    room.outline = moveEdge(d.outline0, d.index, off);
+    d.changed = true;
+    if (this.frameCount % 2 === 0) {
+      this.view.setOptions({ conflicts: this.allConflicts() });
+      this.view.rebuild(this.project);
+    }
+    if (this.frameCount % 10 === 0) this.updatePanel();
   }
 
   // ======================= skan =======================
@@ -1427,6 +1567,11 @@ export class XRApp {
       }
       return;
     }
+    if (this.state === 'edit' && this.tab === 'walls') {
+      const wh = this.rayFrom(c).intersectObjects(this.view.getPickables(['wall']), false)[0];
+      if (wh) this.startWallDrag(c, wh);
+      return; // w zakładce „Ściany” meble są zablokowane
+    }
     if (this.handleMeshes && this.handleMeshes.length) {
       const hh = this.rayFrom(c).intersectObjects(this.handleMeshes, false)[0];
       if (hh) { this.startResize(c, hh.object.userData.handle); return; }
@@ -1477,6 +1622,11 @@ export class XRApp {
 
   onSelectEnd(c) {
     this.endDollGrab(c);
+    if (this.wallDrag && this.wallDrag.c === c) {
+      const changed = this.wallDrag.changed;
+      this.wallDrag = null;
+      if (changed) this.commit(); else this.refresh();
+    }
     if (this.resize && this.resize.c === c) {
       const changed = this.resize.changed;
       this.resize = null;
@@ -1590,6 +1740,7 @@ export class XRApp {
 
   updateGrab(dt) {
     if (this.resize) { this.updateResize(); return; }
+    if (this.wallDrag) { this.updateWallDrag(); return; }
     if (this.dollhouse) this.updateDollhouse(dt);
     else this.updateLocomotion(dt);
     if (this.alignDrag) {
@@ -1878,7 +2029,12 @@ export class XRApp {
   refresh() {
     if (this.state === 'scan') { this.updatePanel(); return; }
     // zapisana siatka nie jest potrzebna w MR — trójkąty pokazuje podgląd na żywo (LiveSceneOverlay)
-    this.view.setOptions({ showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look: this.lookFor(), cameras: this.project.cameras || [] });
+    let look = this.lookFor();
+    if (this.tab === 'walls' && this.state === 'edit' && look.wallStyle === 'off') look = { ...look, wallStyle: 'edges' }; // ściany muszą dać się wskazać
+    this.view.setOptions({
+      showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look, cameras: this.project.cameras || [],
+      selection: this.selWall ? { kind: 'edge', roomId: this.selWall.roomId, index: this.selWall.index } : null,
+    });
     this.view.rebuild(this.project);
     this.updateSelectionLabel();
     this.updatePanel();

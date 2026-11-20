@@ -31,6 +31,12 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - **łączenie drzwi między pokojami**: w trybie „Ściany” zaznacz drzwi i wybierz „🔗 Połącz z drzwiami innego pokoju”, potem kliknij drzwi w drugim pokoju. Tamten pokój ustawi się po drugiej stronie ściany (grubość do ustawienia). Zbędne drzwi (np. otwarte skrzydło rozpoznane jako drugie drzwi) usuwasz przyciskiem „Usuń”,
 - miarka, cofnij i ponów, widok 3D i z góry, eksport **JSON** (projekt) oraz **GLB** (model 3D, np. do Blendera).
 
+**Menu w goglach**
+- Po wejściu („Edytuj w MR” albo „Makieta VR”) pojawia się **ekran startowy**. Wybierasz na nim **wersję układu mebli** (albo tworzysz nową jako kopię) i **tryb**: 🏠 *Jestem w mieszkaniu* (model na prawdziwych pokojach), 🧱 *Makieta* albo 🚶 *Spacer wirtualny*.
+- Potem menu ma zakładki: **Tryb** (przełączanie trybów, wyrównanie, sterowanie makietą i spacerem), **Meble** (nowa bryła, katalog, „Do potwierdzenia”, ukryte), **Ściany**, **Widok**, **Narzędzia** (miarka, kontrola skanu, ekran startowy) i **Wersje**. Na dole każdej zakładki są „Cofnij”, „Ponów” i „Zapisz i wyjdź”.
+- **Ściany w goglach**: w zakładce „Ściany” meble są zablokowane. Wskazujesz ścianę spustem i ciągniesz, żeby ją przesunąć (np. gdy skaner wziął zabudowaną szafę za ścianę). Są też przyciski ±1 i ±5 cm, „+ Drzwi tutaj”, „+ Okno tutaj” i zmiana wysokości pokoju.
+- Kolory mebli wybierasz z **kolorowych próbek** (bez kodów).
+
 **Edycja w MR (na Queście)**
 - model nakłada się na prawdziwy pokój (dopasowanie po podłodze ze Space Setup) z możliwością ręcznego wyrównania,
 - chwytanie mebli „na kiju”: mebel trzyma się końca promienia. Gałka przód/tył odsuwa go i przybliża, gałka w bok obraca. Mebel stojący przykleja się do podłogi i dosuwa do ścian, a **wiszący** (np. telewizor, szafka wisząca) przykleja się tyłem do ściany i jedzie wzdłuż niej, gałka przód/tył zmienia wtedy wysokość. Mocowanie przełączasz w panelu mebla: „Stoi na podłodze” albo „Wisi na ścianie”,
