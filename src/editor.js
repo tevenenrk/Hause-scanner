@@ -7,7 +7,7 @@ import { ApartmentView } from './roomView.js';
 import {
   computeConflicts, computeClearances, snapToWalls, alignRotationToNearestWall, edgeOf, moveEdge, setEdgeLength,
   splitEdge, removeVertex, projectT, worldToRoom, roomToWorld, roomContainsWorldPoint, polygonCentroid, polygonArea,
-  normalizeAngle, rad, deg, localToWorld, worldToLocal,
+  normalizeAngle, rad, deg, localToWorld, worldToLocal, mountOf, attachToWall,
 } from './geometry.js';
 import {
   History, createFurniture, createOpening, createRoom, findFurniture, snapshotScanned, projectToJSON, projectFromJSON, uid,
@@ -782,7 +782,11 @@ export class Editor {
       const local = worldToRoom(room, [fp.x, fp.z]);
       f.x = local[0] + d.off[0];
       f.z = local[1] + d.off[1];
-      if (this.opts.snap && !e.altKey) {
+      if (mountOf(f) === 'wall' && !e.altKey) {
+        // mebel wiszący przykleja się tyłem do najbliższej ściany
+        const a = attachToWall(room, f, 0.6);
+        if (a) Object.assign(f, a);
+      } else if (this.opts.snap && !e.altKey) {
         const s = snapToWalls(room, f, 0.06);
         if (s) { f.x = s.x; f.z = s.z; }
       }
@@ -1593,6 +1597,10 @@ export class Editor {
         <div class="row"><span>Nazwa</span><input data-k="name" value="${esc(f.name)}"></div>
         <div class="row"><span>Typ</span><select data-k="type">${typeOpts}</select></div>
         <div class="row"><span>Kształt</span><select data-k="shape">${shapeOpts}</select></div>
+        <div class="row"><span>Mocowanie</span><select data-k="mount">
+          <option value="floor" ${mountOf(f) === 'floor' ? 'selected' : ''}>stoi na podłodze</option>
+          <option value="wall" ${mountOf(f) === 'wall' ? 'selected' : ''}>wisi na ścianie (przykleja się)</option>
+        </select></div>
         <div class="btns">
           <button data-act="shapeBox" ${f.shape === 'box' ? 'class="primary"' : ''}>▭ Prostopadłościan</button>
           <button data-act="shapeScan" ${f.fromScan ? 'class="primary"' : ''} title="Uproszczony kształt z trójkątów skanu">⌓ Kształt ze skanu</button>
@@ -1762,6 +1770,10 @@ export class Editor {
         case 'verified': f.verified = v; break;
         case 'notes': f.notes = v; break;
         case 'link': f.link = String(v).trim(); break;
+        case 'mount':
+          f.mount = v;
+          if (v === 'wall') { const a = attachToWall(sel.room, f, 2); if (a) Object.assign(f, a); if (!f.y) f.y = 1.2; } else f.y = 0;
+          break;
         case 'display': f.display = v || undefined; break;
         default: return;
       }

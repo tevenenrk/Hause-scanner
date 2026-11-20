@@ -27,6 +27,16 @@ export class LiveSceneOverlay {
     this.tracked = new Map();
     this.stats = { triangles: 0, meshes: 0, planes: 0, globalTriangles: 0 };
     this.showPlanes = true;
+    this.style = { mesh: 0.45, furniture: true, planes: true };
+  }
+
+  /** { mesh: krycie trójkątów siatki 0..1, furniture: żółte bryły, planes: płaszczyzny } */
+  setStyle(style) {
+    this.style = { ...this.style, ...style };
+    this.showPlanes = this.style.planes;
+    // przebudowa przy następnej aktualizacji
+    for (const e of this.tracked.values()) this._remove(e);
+    this.tracked.clear();
   }
 
   get visible() { return this.group.visible; }
@@ -49,9 +59,11 @@ export class LiveSceneOverlay {
       g.setIndex(new THREE.BufferAttribute(new Uint32Array(item.indices), 1));
       const obj = new THREE.Group();
       // wypełnienie (lekko) + krawędzie trójkątów
-      obj.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: isGlobal ? 0x00ccff : 0xffcc33, transparent: true, opacity: isGlobal ? 0.08 : 0.12, side: THREE.DoubleSide, depthWrite: false })));
-      obj.add(new THREE.Mesh(g.clone(), new THREE.MeshBasicMaterial({ color: isGlobal ? 0x66eeff : 0xffdd55, wireframe: true, transparent: true, opacity: isGlobal ? 0.45 : 0.7, depthWrite: false })));
+      const k = Math.max(0.05, this.style.mesh / 0.45);
+      obj.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: isGlobal ? 0x00ccff : 0xffcc33, transparent: true, opacity: (isGlobal ? 0.08 : 0.12) * k, side: THREE.DoubleSide, depthWrite: false })));
+      obj.add(new THREE.Mesh(g.clone(), new THREE.MeshBasicMaterial({ color: isGlobal ? 0x66eeff : 0xffdd55, wireframe: true, transparent: true, opacity: Math.min(1, (isGlobal ? 0.45 : 0.7) * k), depthWrite: false })));
       obj.userData = { label, triangles: item.indices.length / 3, isGlobal };
+      obj.visible = isGlobal ? this.style.mesh > 0 : this.style.furniture;
       return obj;
     }
     const g = planeGeometry(item);
@@ -82,7 +94,8 @@ export class LiveSceneOverlay {
     if (pose) {
       entry.object.matrix.fromArray(pose.transform.matrix);
       entry.object.matrixWorldNeedsUpdate = true;
-      entry.object.visible = kind === 'mesh' || this.showPlanes;
+      const ud = entry.object.userData;
+      entry.object.visible = kind === 'mesh' ? (ud.isGlobal ? this.style.mesh > 0 : this.style.furniture) : this.showPlanes;
     } else {
       entry.object.visible = false;
     }

@@ -243,3 +243,20 @@ test('linkDoors ustawia pokój B naprzeciw drzwi pokoju A', async () => {
   unlinkDoor(p, A.id, dA.id);
   assert.ok(!dA.link && !dB.link);
 });
+
+test('attachToWall: mebel wiszący przykleja się tyłem do ściany', async () => {
+  const { attachToWall, mountOf, furnitureAxes } = await import('../src/geometry.js');
+  const room = createRoom({ outline: [[0, 0], [4, 0], [4, 3], [0, 3]] });
+  const tv = createFurniture({ type: 'screen', x: 3.7, z: 1.2, y: 1.0, w: 1.2, d: 0.08, h: 0.7, rot: 0.4 });
+  assert.equal(mountOf(tv), 'wall');
+  const r = attachToWall(room, tv);
+  assert.ok(r);
+  near(r.x, 4 - 0.04, 1e-9, 'x przy ścianie x=4');
+  near(r.z, 1.2, 1e-9);
+  // przód mebla (+Z lokalne) patrzy do wnętrza (−X)
+  const { az } = furnitureAxes({ ...tv, rot: r.rot });
+  near(az[0], -1, 1e-9); near(az[1], 0, 1e-9);
+  const far = createFurniture({ type: 'screen', x: 2, z: 1.5, w: 1, d: 0.1, h: 0.5, y: 1 });
+  assert.equal(attachToWall(room, far), null);
+  assert.equal(mountOf(createFurniture({ type: 'table' })), 'floor');
+});

@@ -10,7 +10,7 @@ import { checkRoom, verdictText } from '../scanCheck.js';
 import { ApartmentView } from '../roomView.js';
 import {
   computeConflicts, snapToWalls, normalizeAngle, rad, polygonCentroid, alignRotationToNearestWall, worldToRoom, roomToWorld,
-  polygonArea, roomContainsWorldPoint, localToWorld,
+  polygonArea, roomContainsWorldPoint, localToWorld, mountOf, attachToWall,
 } from '../geometry.js';
 import {
   History, createFurniture, findFurniture, uid, mergeFurniture, splitFurniture, resizeFurniture,
@@ -90,7 +90,7 @@ export class XRApp {
     this.activeDim = 'w';
     this.grab = null;
     this.alignDrag = null;
-    this.showMesh = true; // siatka trójkątów ze Space Setup na żywo
+    this.showMesh = false; // trójkąty skanu na żywo w trybie edycji (przy skanie zawsze)
     this.preferUnbounded = o.unbounded !== false;
     this.dollhouse = false;
     this.doll = null;
@@ -150,6 +150,8 @@ export class XRApp {
     }
 
     this.live = new LiveSceneOverlay();
+    // przy skanie trójkąty zawsze widoczne; potem wg ustawień użytkownika
+    this.live.setStyle(this.state === 'scan' ? { mesh: 0.45, furniture: true, planes: true } : this.liveStyle());
     scene.add(this.live.group);
 
     this.root = new THREE.Group();
@@ -289,6 +291,7 @@ export class XRApp {
     }
     const pose = frame.getViewerPose(this.refSpace);
     if (pose) this.head = new THREE.Matrix4().fromArray(pose.transform.matrix);
+    if (this.frameCount % 30 === 1 && this.head) this.floorLevel = this.estimateFloorY(this.isVR ? null : frame);
     if (this.needDollPlace && this.head) {
       this.needDollPlace = false;
       this.placeDollInFront();
@@ -425,6 +428,11 @@ export class XRApp {
       rooms: () => { this.state = 'rooms'; this.updatePanel(); },
       goRoom: () => { this.state = 'edit'; if (this.dollhouse) this.dollhouse = false; this.enterWalk(arg); },
       exitWalk: () => this.exitWalk(),
+      floorAdj: () => this.adjustFloor(parseFloat(arg) / 100),
+      mount: () => { const s0 = this.sel(); if (s0) { s0.f.mount = arg; if (arg === 'wall') { const a = attachToWall(s0.room, s0.f, 2); if (a) Object.assign(s0.f, a); if (!s0.f.y) s0.f.y = 1.2; } else s0.f.y = 0; this.commit(); } },
+      liveMesh: () => { const st = this.liveStyle(); st.mesh = parseFloat(arg); this.showMesh = st.mesh > 0; this.live.setStyle(st); this.saveLook(); },
+      liveFurn: () => { const st = this.liveStyle(); st.furniture = !st.furniture; this.live.setStyle(st); this.saveLook(); },
+      livePlanes: () => { const st = this.liveStyle(); st.planes = !st.planes; this.live.setStyle(st); this.saveLook(); },
       check: () => this.openCheck(),
       issue: () => this.gotoIssue(+arg),
       checkBack: () => { this.state = this.checkReturn || 'edit'; if (this.state !== 'scan') this.holesGroup.clear(); this.refresh(); },
@@ -587,6 +595,11 @@ export class XRApp {
           [0.1, 0.25, 0.5, 0.75].map((v) => ({ id: `lookWallOp:${v}`, label: `Krycie ścian ${Math.round(v * 100)}%`, style: on(l.wallStyle === 'transparent' && Math.abs(l.wallOpacity - v) < 0.01) })),
           [{ id: 'lookFurn:solid', label: 'Meble: bryły', style: on(l.furnStyle === 'solid') }, { id: 'lookFurn:edges', label: 'Meble: krawędzie', style: on(l.furnStyle === 'edges') }],
           [1, 0.7, 0.4, 0.2].map((v) => ({ id: `lookFurnOp:${v}`, label: `Krycie mebli ${Math.round(v * 100)}%`, style: on(l.furnStyle === 'solid' && Math.abs(l.furnOpacity - v) < 0.01) })),
+          ...(!this.isVR ? [
+            [{ id: 'liveMesh:0', label: 'Trójkąty skanu: wył.', style: on(!this.showMesh) }, { id: 'liveMesh:0.2', label: 'słabe', style: on(this.showMesh && this.liveStyle().mesh <= 0.25) }, { id: 'liveMesh:0.45', label: 'wyraźne', style: on(this.showMesh && this.liveStyle().mesh > 0.25) }],
+            [{ id: 'liveFurn', label: this.liveStyle().furniture ? 'Żółte bryły skanu: wł.' : 'Żółte bryły skanu: wył.', style: on(this.liveStyle().furniture) }, { id: 'livePlanes', label: this.liveStyle().planes ? 'Płaszczyzny skanu: wł.' : 'Płaszczyzny skanu: wył.', style: on(this.liveStyle().planes) }],
+          ] : []),
+          ...(this.walking ? [[{ id: 'floorAdj:-5', label: 'Podłoga niżej 5 cm' }, { id: 'floorAdj:5', label: 'Podłoga wyżej 5 cm' }]] : []),
           [{ id: 'lookFloor', label: l.floor ? 'Podłoga: wł.' : 'Podłoga: wył.', style: on(l.floor) }, { id: 'back', label: '← Wróć', style: 'primary' }],
         ],
       };
@@ -664,13 +677,19 @@ export class XRApp {
       const dimLabel = (k, n) => ({ id: `dim:${k}`, label: n, style: this.activeDim === k ? 'active' : undefined });
       return {
         title: f.name,
-        lines: [`${cmTxt(f.w)} × ${cmTxt(f.d)} × ${cmTxt(f.h)} cm. Kolorowe kulki na bryle: chwyć spustem i ciągnij, aby zmienić szerokość (czerwona), głębokość (niebieska), wysokość (zielona).`, confTxt],
+        lines: [
+          `${cmTxt(f.w)} × ${cmTxt(f.d)} × ${cmTxt(f.h)} cm${mountOf(f) === 'wall' ? `, ${cmTxt(f.y || 0)} cm nad podłogą` : ''}. ${confTxt}`,
+          mountOf(f) === 'wall'
+            ? 'Przesuwanie: trzymaj spust na meblu — przykleja się tyłem do najbliższej ściany. Gałka przód/tył: wyżej/niżej.'
+            : 'Przesuwanie: trzymaj spust na meblu. Gałka przód/tył: dalej/bliżej, w bok: obrót. Kulki na bryle zmieniają wymiary.',
+        ],
         rows: [
+          [{ id: 'type', label: `Typ: ${typeName(f.type)} ▸`, style: 'primary' }, { id: 'mount:floor', label: 'Stoi na podłodze', style: mountOf(f) === 'floor' ? 'active' : undefined }, { id: 'mount:wall', label: 'Wisi na ścianie', style: mountOf(f) === 'wall' ? 'active' : undefined }],
           [{ id: 'rot:90', label: '⟲ 90°' }, { id: 'rot:15', label: '⟲ 15°' }, { id: 'rot:-15', label: '⟳ 15°' }, { id: 'rot:-90', label: '⟳ 90°' }],
           [dimLabel('w', `Szer. ${cmTxt(f.w)}`), dimLabel('d', `Głęb. ${cmTxt(f.d)}`), dimLabel('h', `Wys. ${cmTxt(f.h)}`)],
           [{ id: 'dimAdd:-10', label: '−10' }, { id: 'dimAdd:-5', label: '−5' }, { id: 'dimAdd:-1', label: '−1' }, { id: 'dimAdd:1', label: '+1' }, { id: 'dimAdd:5', label: '+5' }, { id: 'dimAdd:10', label: '+10' }],
           [{ id: 'snap', label: 'Dosuń do ściany' }, { id: 'alignWall', label: 'Równolegle do ściany' }],
-          [{ id: 'type', label: 'Zmień typ' }, { id: 'mergeStart', label: 'Scal z…' }, { id: 'dup', label: 'Duplikuj' }],
+          [{ id: 'mergeStart', label: 'Scal z…' }, { id: 'dup', label: 'Duplikuj' }],
           [{ id: 'display:normal', label: 'Wygląd: normalny', style: !f.display ? 'active' : undefined }, { id: 'display:transparent', label: 'Półprzezroczysty', style: f.display === 'transparent' ? 'active' : undefined }, { id: 'display:edges', label: 'Krawędzie', style: f.display === 'edges' ? 'active' : undefined }],
           [{ id: 'more', label: 'Więcej… (kształt, wysokość, kolor)' }],
           [{ id: 'hide', label: 'Ukryj' }, { id: 'del', label: 'Usuń', style: 'danger' }],
@@ -726,7 +745,7 @@ export class XRApp {
     return {
       title: `Edycja w MR${anchor ? ' — ' + anchor.name : ''}`,
       lines: [
-        'Wyceluj w mebel i trzymaj spust (lub szczypnij), aby go przesuwać. Gałka obraca chwycony mebel. Grip przywołuje panel.',
+        'Chwyć mebel spustem (lub szczypnięciem) i prowadź promieniem. Gałka przód/tył: dalej/bliżej, w bok: obrót. Grip przywołuje panel.',
         this.alignInfo || '',
       ].filter(Boolean),
       rows: [
@@ -805,6 +824,7 @@ export class XRApp {
 
   /** Wszystkie pokoje ze Space Setup naraz, ułożone względem siebie. */
   doSaveAllRooms(frame) {
+    this.live.setStyle(this.liveStyle());
     this.holesGroup.clear();
     const data = captureScene(frame, this.refSpace);
     const n = this.project.rooms.length + 1;
@@ -859,6 +879,7 @@ export class XRApp {
   }
 
   doSaveScan(frame) {
+    this.live.setStyle(this.liveStyle());
     this.holesGroup.clear();
     const data = captureScene(frame, this.refSpace);
     const n = this.project.rooms.length + 1;
@@ -1043,10 +1064,25 @@ export class XRApp {
     this.view.setOptions({ wallMode: 'full', showZones: true, showGhosts: false, showLabels: false, mode: 'furniture' });
     const c = roomToWorld(room, polygonCentroid(room.outline));
     const head = this.head ? new THREE.Vector3().setFromMatrixPosition(this.head) : new THREE.Vector3();
-    this.walkRoot = new THREE.Matrix4().makeTranslation(head.x - c[0], 0, head.z - c[1]);
+    // poziom podłogi: z płaszczyzny podłogi Space Setup (MR) albo z przestrzeni local-floor; plus ręczna korekta
+    const fy = (this.floorLevel ?? (this.refType === 'local-floor' ? 0 : head.y - 1.6)) + this.floorOffset();
+    this.walkRoot = new THREE.Matrix4().makeTranslation(head.x - c[0], fy, head.z - c[1]);
     this.applyAlignment();
     this.placePanel(true);
     this.refresh();
+  }
+
+  floorOffset() {
+    return (this.project.view && this.project.view.floorOffset) || 0;
+  }
+
+  /** Ręczna korekta wysokości podłogi w spacerze (gdy gogle źle ocenią poziom). */
+  adjustFloor(d) {
+    const v = this.project.view || (this.project.view = {});
+    v.floorOffset = Math.round(((v.floorOffset || 0) + d) * 100) / 100;
+    if (this.walkRoot) this.walkRoot.elements[13] += d;
+    this.applyAlignment();
+    this.saveLook();
   }
 
   /** AR: powrót ze spaceru wirtualnego do modelu nałożonego na prawdziwy pokój. */
@@ -1283,6 +1319,12 @@ export class XRApp {
     return this.dollhouse || this.walking || this.isVR ? v.model : v.mr;
   }
 
+  liveStyle() {
+    const v = this.project.view || (this.project.view = {});
+    if (!v.live) v.live = { mesh: 0.45, furniture: true, planes: true };
+    return v.live;
+  }
+
   saveLook() {
     this.dirty = true;
     if (this.onSave) this.onSave(this.project);
@@ -1416,11 +1458,17 @@ export class XRApp {
       }
       this.selectedId = id;
       if (this.state === 'type' || this.state === 'add') this.state = 'edit';
-      const fp = this.rayFloor(c);
-      if (fp) {
-        const ap = this.worldToApartment(fp);
-        const local = worldToRoom(found.room, ap);
-        this.grab = { c, id, off: [found.f.x - local[0], found.f.z - local[1]], moved: false };
+      // chwyt „na kiju”: mebel trzyma się końca promienia; gałka przód/tył = dalej/bliżej
+      const cp = this.ctrlPos(c);
+      const hit = fh.point.clone();
+      const cw = roomToWorld(found.room, [found.f.x, found.f.z]);
+      const centerW = new THREE.Vector3(cw[0], 0, cw[1]).applyMatrix4(this.root.matrix);
+      {
+        this.grab = {
+          c, id, moved: false,
+          dist: Math.max(0.15, Math.hypot(hit.x - cp.x, hit.z - cp.z)),
+          off: new THREE.Vector2(centerW.x - hit.x, centerW.z - hit.z),
+        };
       }
       this.haptic(c);
       this.refresh();
@@ -1571,22 +1619,42 @@ export class XRApp {
     if (!found) { this.grab = null; return; }
     const { room, f } = found;
     const c = this.grab.c;
-    const fp = this.rayFloor(c);
-    if (fp) {
-      const local = worldToRoom(room, this.worldToApartment(fp));
-      const nx = local[0] + this.grab.off[0], nz = local[1] + this.grab.off[1];
-      if (Math.hypot(nx - f.x, nz - f.z) > 0.002) {
-        f.x = nx;
-        f.z = nz;
-        const s = snapToWalls(room, f, 0.05);
-        if (s) { f.x = s.x; f.z = s.z; }
-        this.grab.moved = true;
+    const g = this.grab;
+    const wallMount = mountOf(f) === 'wall';
+    const sx = this.stickX(c), sy = this.stickY(c);
+    // gałka przód/tył: mebel na podłodze — dalej/bliżej; mebel wiszący — wyżej/niżej
+    if (sy) {
+      if (wallMount) {
+        f.y = Math.max(0, Math.min(room.height - f.h, (f.y || 0) - sy * dt * 0.5));
+        g.moved = true;
+      } else {
+        g.dist = Math.min(15, Math.max(0.15, g.dist - sy * dt * 1.8));
       }
     }
-    const sx = this.stickX(c);
-    if (sx) {
+    const cp = this.ctrlPos(c);
+    const dir = new THREE.Vector3(0, 0, -1).transformDirection(c.matrixWorld);
+    dir.y = 0;
+    if (dir.lengthSq() > 1e-4) {
+      dir.normalize();
+      const wx = cp.x + dir.x * g.dist + g.off.x, wz = cp.z + dir.z * g.dist + g.off.y;
+      const local = worldToRoom(room, this.worldToApartment(new THREE.Vector3(wx, 0, wz)));
+      if (Math.hypot(local[0] - f.x, local[1] - f.z) > 0.002 || g.moved) {
+        f.x = local[0];
+        f.z = local[1];
+        if (wallMount) {
+          const a = attachToWall(room, f, 0.6);
+          if (a) { f.x = a.x; f.z = a.z; f.rot = a.rot; g.onWall = true; } else g.onWall = false;
+        } else {
+          const s2 = snapToWalls(room, f, 0.05);
+          if (s2) { f.x = s2.x; f.z = s2.z; }
+        }
+        g.moved = true;
+      }
+    }
+    // gałka w bok: obrót (mebel przyklejony do ściany obraca się razem ze ścianą)
+    if (sx && !(wallMount && g.onWall)) {
       f.rot = normalizeAngle((f.rot || 0) - sx * dt * 1.6);
-      this.grab.moved = true;
+      g.moved = true;
     }
     if (this.grab.moved) {
       this.view.updateFurnitureTransform(f);

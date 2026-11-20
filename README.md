@@ -33,7 +33,7 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 
 **Edycja w MR (na Queście)**
 - model nakłada się na prawdziwy pokój (dopasowanie po podłodze ze Space Setup) z możliwością ręcznego wyrównania,
-- chwytanie mebli promieniem kontrolera albo szczypnięciem, obrót gałką,
+- chwytanie mebli „na kiju”: mebel trzyma się końca promienia. Gałka przód/tył odsuwa go i przybliża, gałka w bok obraca. Mebel stojący przykleja się do podłogi i dosuwa do ścian, a **wiszący** (np. telewizor, szafka wisząca) przykleja się tyłem do ściany i jedzie wzdłuż niej, gałka przód/tył zmienia wtedy wysokość. Mocowanie przełączasz w panelu mebla: „Stoi na podłodze” albo „Wisi na ścianie”,
 - panel 3D: obrót, wymiary ±1/±5 cm, dosuwanie do ściany, typ, **scalanie** („Scal z…”, potem wskazujesz drugą bryłę), duplikowanie, ukrywanie, usuwanie, cofanie, dodawanie mebli,
 - **🏠 Makieta w goglach**: miniatura mieszkania przed Tobą. **Grip** (albo szczypnięcie poza meblem) chwyta makietę ręką: przenosisz ją i obracasz. **Obie ręce naraz**: rozsuwanie dłoni powiększa, zsuwanie zmniejsza. Gałka też obraca i skaluje. Meble chwytasz i przesuwasz także w miniaturze,
 - trójkąty skanu na żywo (można wyłączyć),

@@ -485,6 +485,36 @@ export function computeClearances(room, f, maxDist = 6) {
   return out;
 }
 
+/** Sposób mocowania mebla: 'floor' (stoi na podłodze) albo 'wall' (wisi na ścianie). */
+export function mountOf(f) {
+  if (f.mount) return f.mount;
+  return f.type === 'screen' || (f.y || 0) > 0.3 ? 'wall' : 'floor';
+}
+
+/**
+ * Mebel wiszący: przykleja tył mebla do najbliższej ściany (w zasięgu `maxDist` od środka),
+ * obraca go tyłem do ściany i pozwala przesuwać tylko wzdłuż niej. Zwraca { x, z, rot } albo null.
+ */
+export function attachToWall(room, f, maxDist = 0.6) {
+  const outline = room.outline || [];
+  let best = null;
+  for (let k = 0; k < outline.length; k++) {
+    const e = edgeOf(outline, k);
+    if (e.length < 0.2) continue;
+    const d = distPointSegment([f.x, f.z], e.a, e.b);
+    if (d <= maxDist + f.d / 2 && (!best || d < best.d)) best = { d, e };
+  }
+  if (!best) return null;
+  const { e } = best;
+  // tył mebla (lokalne -Z) ma patrzeć w ścianę: lokalne +Z = normalna do wnętrza
+  const rot = Math.atan2(e.inward[0], e.inward[1]);
+  const half = Math.min(f.w / 2, e.length / 2);
+  let t = projectT([f.x, f.z], e.a, e.b) * e.length;
+  t = Math.max(half, Math.min(e.length - half, t));
+  const p = add(add(e.a, scale(e.dir, t)), scale(e.inward, f.d / 2));
+  return { x: p[0], z: p[1], rot: normalizeAngle(rot) };
+}
+
 /** Dosuwa mebel do najbliższej równoległej ściany, jeśli jest w zasięgu `tol`. Zwraca nowe {x, z} lub null. */
 export function snapToWalls(room, f, tol = 0.05) {
   const outline = room.outline || [];
