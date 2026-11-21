@@ -216,10 +216,22 @@ export class XRApp {
       const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
       line.scale.z = 2;
       c.add(line);
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.008, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      // kropka na końcu promienia — zawsze widoczna (bez testu głębi)
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.009, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }));
+      dot.renderOrder = 105;
       dot.visible = false;
       this.scene.add(dot);
-      c.userData = { line, dot, index: i };
+      // celownik na panelu: żółty pierścień z kropką, rysowany NA panelu
+      const cursor = new THREE.Group();
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd400, depthTest: false, transparent: true, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.0075, 0.011, 32), ringMat);
+      const center = new THREE.Mesh(new THREE.CircleGeometry(0.0035, 16), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, side: THREE.DoubleSide }));
+      const halo = new THREE.Mesh(new THREE.RingGeometry(0.011, 0.0135, 32), new THREE.MeshBasicMaterial({ color: 0x000000, depthTest: false, transparent: true, opacity: 0.6, side: THREE.DoubleSide }));
+      cursor.add(halo, ring, center);
+      cursor.traverse((o) => { o.renderOrder = 120; });
+      cursor.visible = false;
+      this.scene.add(cursor);
+      c.userData = { line, dot, cursor, index: i };
       c.addEventListener('connected', (e) => { c.userData.inputSource = e.data; c.visible = true; });
       c.addEventListener('disconnected', () => { c.userData.inputSource = null; c.visible = false; });
       c.addEventListener('selectstart', () => this.onSelectStart(c));
@@ -328,17 +340,26 @@ export class XRApp {
   updateRays() {
     for (const c of this.controllers) {
       const { line, dot } = c.userData;
-      if (!c.visible) { dot.visible = false; continue; }
+      if (!c.visible) { dot.visible = false; c.userData.cursor.visible = false; continue; }
       let dist = 2;
       let hover = null;
       const ph = this.panelHit(c);
+      const { cursor } = c.userData;
       if (ph) {
         dist = ph.distance;
         const b = this.panel.buttonAtUV(ph.uv);
         hover = b ? b.id : null;
         this.panel.setHover(hover);
         c.userData.overPanel = true;
+        // celownik leży na panelu, lekko przed nim, zwrócony jak panel
+        cursor.visible = true;
+        cursor.quaternion.copy(this.panel.mesh.getWorldQuaternion(new THREE.Quaternion()));
+        const n = new THREE.Vector3(0, 0, 1).applyQuaternion(cursor.quaternion);
+        cursor.position.copy(ph.point).addScaledVector(n, 0.002);
+        cursor.scale.setScalar(b && !b.disabled ? 1.25 : 1);
+        dot.visible = false;
       } else {
+        cursor.visible = false;
         c.userData.overPanel = false;
         const fh = this.state !== 'scan' ? this.furnitureHit(c) : null;
         if (fh) dist = fh.distance;
@@ -348,8 +369,10 @@ export class XRApp {
         }
       }
       line.scale.z = dist;
-      dot.visible = true;
-      dot.position.copy(this.raycaster.ray.at(dist, new THREE.Vector3()));
+      if (!ph) {
+        dot.visible = true;
+        dot.position.copy(this.raycaster.ray.at(dist, new THREE.Vector3()));
+      }
     }
     if (!this.controllers.some((c) => c.userData.overPanel)) this.panel.setHover(null);
   }
@@ -438,14 +461,28 @@ export class XRApp {
       photoTake: () => this.requestPhoto(null),
       photoFurn: () => this.requestPhoto(this.selectedId),
       photoBack: () => { this.state = 'edit'; this.refresh(); },
-      tab: () => { this.tab = arg; this.state = 'edit'; if (arg === 'walls') this.selectedId = null; if (arg !== 'walls') this.selWall = null; this.refresh(); },
+      tab: () => { this.tab = arg; this.state = 'edit'; if (arg === 'walls') this.selectedId = null; if (arg !== 'walls') { this.selWall = null; this.selOpening = null; } this.refresh(); },
       start: () => { if (arg === 'menu') { this.state = 'start'; this.selectedId = null; this.selWall = null; this.refresh(); } else this.chooseMode(arg); },
       modeMR: () => { if (this.dollhouse) this.exitDollhouse(); else if (this.walking) this.exitWalk(); this.tab = 'mode'; this.refresh(); },
       modeDoll: () => { this.enterDollhouse(); this.tab = 'mode'; this.refresh(); },
       modeWalk: () => this.chooseMode('walk'),
       wallMove: () => this.moveSelectedWall(parseFloat(arg) / 100),
       wallOpening: () => this.addOpeningOnWall(arg),
-      wallDeselect: () => { this.selWall = null; this.refresh(); },
+      wallDeselect: () => { this.selWall = null; this.selOpening = null; this.refresh(); },
+      opDim: () => { this.opDim = arg; this.updatePanel(); },
+      opAdd: () => this.editOpening((op, e) => {
+        const d = parseFloat(arg) / 100;
+        const k = this.opDim || 'width';
+        if (k === 'width') op.width = Math.max(0.3, Math.min(e.length, op.width + d));
+        else if (k === 'height') op.height = Math.max(0.3, op.height + d);
+        else op.sill = Math.max(0, (op.sill || 0) + d);
+      }),
+      opMove: () => this.editOpening((op) => { op.offset += parseFloat(arg) / 100; }),
+      opPlace: () => this.editOpening((op, e) => { op.offset = arg === 'left' ? 0 : arg === 'right' ? e.length - op.width : (e.length - op.width) / 2; }),
+      opSwing: () => this.editOpening((op) => { op.swing = arg; }),
+      opType: () => this.editOpening((op) => { op.type = op.type === 'door' ? 'window' : 'door'; if (op.type === 'window') { op.swing = 'none'; if (!op.sill) op.sill = 0.85; op.height = Math.min(op.height, 1.5); } else { op.sill = 0; op.swing = 'in'; op.height = Math.max(op.height, 2.0); } }),
+      opDel: () => { const r = this.selRoom(); if (r && this.selOpening) { r.openings = r.openings.filter((o) => o.id !== this.selOpening.id); this.selOpening = null; this.commit(); } },
+      opDone: () => { this.selOpening = null; this.refresh(); },
       roomHeight: () => { const r = this.selWall && this.project.rooms.find((x) => x.id === this.selWall.roomId); if (r) { r.height = Math.max(1.8, Math.round((r.height + parseFloat(arg) / 100) * 100) / 100); this.commit(); } },
       floorAdj: () => this.adjustFloor(parseFloat(arg) / 100),
       mount: () => { const s0 = this.sel(); if (s0) { s0.f.mount = arg; if (arg === 'wall') { const a = attachToWall(s0.room, s0.f, 2); if (a) Object.assign(s0.f, a); if (!s0.f.y) s0.f.y = 1.2; } else s0.f.y = 0; this.commit(); } },
@@ -689,6 +726,7 @@ export class XRApp {
     }
     if (st === 'photo') return this.buildPhotoPage();
     if (st === 'start') return this.buildStartPage();
+    if (this.selOpening && this.tab === 'walls') return this.buildOpeningPage();
     if (this.selWall && this.tab === 'walls') return this.buildWallPage();
     return this.buildTabPage();
   }
@@ -780,7 +818,7 @@ export class XRApp {
       ]);
     } else if (tab === 'walls') {
       title = 'Ściany';
-      lines.push('Wskaż ścianę spustem i ciągnij, żeby ją przesunąć (np. gdy skaner wziął szafę za ścianę). W tej zakładce meble są zablokowane.');
+      lines.push('Wskaż ścianę spustem, a potem gałką przód/tył odsuń ją albo przybliż (np. gdy skaner wziął szafę za ścianę). Wskaż drzwi lub okno, żeby zmienić wymiary i położenie. Meble są tu zablokowane.');
     } else if (tab === 'view') {
       const l = this.lookFor();
       title = `Widok ${this.dollhouse || this.walking || this.isVR ? 'makiety' : 'w pokoju'}`;
@@ -870,6 +908,26 @@ export class XRApp {
     const shot = this.photo.capture(pose);
     if (!shot) return; // obraz jeszcze niegotowy — spróbujemy w kolejnej klatce
     const req = this.pendingPhoto;
+    if (shot.black) {
+      // czarny obraz: kamera się rozgrzewa albo ta metoda nie działa — ponawiamy, potem zmieniamy metodę
+      const now = performance.now();
+      if (!req.t0) req.t0 = now;
+      const el = now - req.t0;
+      if (el > 1500 && !req.warned) { req.warned = true; this.photoMsg = 'Kamera daje czarny obraz — próbuję dalej…'; this.updatePanel(); }
+      if (el > 2500 && this.photo.mode === 'xr' && !req.switched) {
+        req.switched = true;
+        this.photoMsg = 'Obraz z WebXR jest czarny — przełączam na zwykłą kamerę…';
+        this.updatePanel();
+        this.photoStarting = true;
+        this.photo.switchToVideo(pose).then((ok) => { this.photoStarting = false; if (!ok) this.photoMsg = `Nie udało się włączyć kamery: ${this.photo.error}`; });
+      }
+      if (el > 6000) {
+        this.pendingPhoto = null;
+        this.photoMsg = 'Kamera zwraca czarny obraz, zdjęcie nie zostało zapisane. Sprawdź dostęp: Ustawienia Questa → Prywatność i bezpieczeństwo → Uprawnienia → Kamera gogli (dla Przeglądarki). Potem wyjdź i wejdź ponownie.';
+        this.updatePanel();
+      }
+      return;
+    }
     this.pendingPhoto = null;
     this.savePhoto(shot, req.attachId);
   }
@@ -910,7 +968,7 @@ export class XRApp {
     const e = edgeOf(r.outline, this.selWall.index);
     return {
       title: `Ściana ${this.selWall.index + 1} · ${r.name}`,
-      lines: [`Długość ${cmTxt(e.length)} cm, wysokość pokoju ${cmTxt(r.height)} cm. Ciągnij ścianę spustem albo użyj przycisków.`],
+      lines: [`Długość ${cmTxt(e.length)} cm, wysokość pokoju ${cmTxt(r.height)} cm.`, 'Gałka przód/tył: ściana dalej / bliżej Ciebie. Spustem wskaż drzwi lub okno, żeby zmienić ich wymiary i położenie.'],
       rows: [
         [{ id: 'wallMove:-5', label: '→← Do środka 5' }, { id: 'wallMove:-1', label: 'Do środka 1' }, { id: 'wallMove:1', label: 'Na zewnątrz 1' }, { id: 'wallMove:5', label: '←→ Na zewnątrz 5' }],
         [{ id: 'wallOpening:door', label: '🚪 + Drzwi tutaj' }, { id: 'wallOpening:window', label: '🪟 + Okno tutaj' }],
@@ -935,7 +993,103 @@ export class XRApp {
     op.width = Math.min(op.width, Math.max(0.3, e.length - 0.1));
     op.offset = Math.max(0, (e.length - op.width) / 2);
     r.openings.push(op);
+    this.selOpening = { roomId: r.id, id: op.id };
+    this.opDim = 'width';
     this.commit();
+  }
+
+  selRoom() {
+    const sel = this.selOpening || this.selWall;
+    return sel ? this.project.rooms.find((x) => x.id === sel.roomId) : null;
+  }
+
+  selOp() {
+    const r = this.selRoom();
+    return r && this.selOpening ? r.openings.find((o) => o.id === this.selOpening.id) : null;
+  }
+
+  /** Zmiana drzwi/okna z pilnowaniem, żeby zostały w obrębie ściany. */
+  editOpening(fn) {
+    const r = this.selRoom(), op = this.selOp();
+    if (!r || !op) return;
+    const e = edgeOf(r.outline, op.edge);
+    fn(op, e);
+    op.width = Math.min(op.width, e.length);
+    op.offset = Math.max(0, Math.min(e.length - op.width, Math.round(op.offset * 1000) / 1000));
+    this.commit();
+  }
+
+  buildOpeningPage() {
+    const r = this.selRoom(), op = this.selOp();
+    if (!r || !op) { this.selOpening = null; return this.buildTabPage(); }
+    const e = edgeOf(r.outline, op.edge);
+    const left = op.offset, right = e.length - op.offset - op.width;
+    const isDoor = op.type === 'door';
+    const k = this.opDim || 'width';
+    const on = (c) => (c ? 'active' : undefined);
+    return {
+      title: `${isDoor ? '🚪 Drzwi' : '🪟 Okno'} · ściana ${op.edge + 1} · ${r.name}`,
+      lines: [
+        `Szerokość ${cmTxt(op.width)} cm · wysokość ${cmTxt(op.height)} cm${isDoor ? '' : ` · parapet ${cmTxt(op.sill || 0)} cm`}.`,
+        `Od lewego narożnika ${cmTxt(left)} cm, od prawego ${cmTxt(right)} cm (patrząc na ścianę od środka pokoju). Gałka w bok: przesuwanie wzdłuż ściany.`,
+      ],
+      rows: [
+        [{ id: 'opDim:width', label: `↔ Szerokość ${cmTxt(op.width)}`, style: on(k === 'width') }, { id: 'opDim:height', label: `↕ Wysokość ${cmTxt(op.height)}`, style: on(k === 'height') }, ...(isDoor ? [] : [{ id: 'opDim:sill', label: `▁ Parapet ${cmTxt(op.sill || 0)}`, style: on(k === 'sill') }])],
+        [{ id: 'opAdd:-10', label: '−10' }, { id: 'opAdd:-5', label: '−5' }, { id: 'opAdd:-1', label: '−1' }, { id: 'opAdd:1', label: '+1' }, { id: 'opAdd:5', label: '+5' }, { id: 'opAdd:10', label: '+10' }],
+        [{ id: 'opMove:-10', label: '← 10' }, { id: 'opMove:-1', label: '← 1' }, { id: 'opMove:1', label: '1 →' }, { id: 'opMove:10', label: '10 →' }],
+        [{ id: 'opPlace:left', label: '⇤ Do lewego narożnika' }, { id: 'opPlace:center', label: 'Na środek' }, { id: 'opPlace:right', label: 'Do prawego ⇥' }],
+        ...(isDoor ? [[{ id: 'opSwing:in', label: 'Otwierane do środka', style: on(op.swing === 'in') }, { id: 'opSwing:out', label: 'Na zewnątrz', style: on(op.swing === 'out') }, { id: 'opSwing:none', label: 'Przesuwne / brak', style: on(op.swing === 'none') }]] : []),
+        [{ id: 'opType', label: isDoor ? 'Zamień na okno' : 'Zamień na drzwi' }, { id: 'opDel', label: '🗑 Usuń', style: 'danger' }],
+        [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'opDone', label: '✓ Gotowe', style: 'primary' }],
+      ],
+    };
+  }
+
+  /**
+   * Gałka w zakładce „Ściany”: przód/tył odsuwa/przybliża zaznaczoną ścianę (względem użytkownika),
+   * a przy zaznaczonych drzwiach/oknie gałka w bok przesuwa je wzdłuż ściany.
+   */
+  updateWallStick(dt) {
+    let sx = 0, sy = 0;
+    for (const c of this.controllers) { if (!c.visible) continue; sx = sx || this.stickX(c); sy = sy || this.stickY(c); }
+    const r = this.selRoom();
+    if (!r) return;
+    const resp = (v) => Math.sign(v) * v * v; // delikatnie przy małym wychyleniu
+    if (this.selOpening) {
+      const op = this.selOp();
+      if (op && sx) {
+        const e = edgeOf(r.outline, op.edge);
+        op.offset = Math.max(0, Math.min(e.length - op.width, op.offset + resp(sx) * dt * 0.4));
+        this.stickEdit = true;
+        if (this.frameCount % 3 === 0) { this.view.rebuild(this.project); }
+        if (this.frameCount % 10 === 0) this.updatePanel();
+      }
+    } else if (sy) {
+      if (!this.wallStick) {
+        const e = edgeOf(r.outline, this.selWall.index);
+        const rot = r.transform.rot || 0;
+        const ox = -e.inward[0], oz = -e.inward[1];
+        const out = new THREE.Vector3(ox * Math.cos(rot) + oz * Math.sin(rot), 0, -ox * Math.sin(rot) + oz * Math.cos(rot)).transformDirection(this.root.matrix);
+        const mid = roomToWorld(r, [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]);
+        const midW = new THREE.Vector3(mid[0], 0, mid[1]).applyMatrix4(this.root.matrix);
+        const head = this.head ? new THREE.Vector3().setFromMatrixPosition(this.head) : new THREE.Vector3();
+        // „dalej od użytkownika” = w stronę, w którą ściana leży względem głowy
+        const away = midW.sub(head).setY(0).dot(out) >= 0 ? 1 : -1;
+        this.wallStick = { outline0: r.outline.map((p) => [p[0], p[1]]), index: this.selWall.index, offset: 0, away };
+      }
+      const w = this.wallStick;
+      w.offset += -resp(sy) * dt * 0.3 * w.away;
+      r.outline = moveEdge(w.outline0, w.index, Math.round(w.offset * 200) / 200);
+      this.stickEdit = true;
+      if (this.frameCount % 3 === 0) { this.view.setOptions({ conflicts: this.allConflicts() }); this.view.rebuild(this.project); }
+      if (this.frameCount % 10 === 0) this.updatePanel();
+    }
+    if (!sx && !sy && this.stickEdit) {
+      // gałka puszczona — zatwierdzamy zmianę (jeden krok cofania)
+      this.stickEdit = false;
+      this.wallStick = null;
+      this.commit();
+    }
   }
 
   startWallDrag(c, hit) {
@@ -1649,8 +1803,17 @@ export class XRApp {
       return;
     }
     if (this.state === 'edit' && this.tab === 'walls') {
-      const wh = this.rayFrom(c).intersectObjects(this.view.getPickables(['wall']), false)[0];
-      if (wh) this.startWallDrag(c, wh);
+      // spust tylko zaznacza ścianę albo drzwi/okno; odległość reguluje gałka
+      const wh = this.rayFrom(c).intersectObjects(this.view.getPickables(['opening', 'wall']), false)[0];
+      if (wh && wh.object.userData.kind === 'opening') {
+        const room = this.project.rooms.find((x) => x.id === wh.object.userData.roomId);
+        const op = room && room.openings.find((o) => o.id === wh.object.userData.id);
+        if (op) { this.selOpening = { roomId: room.id, id: op.id }; this.selWall = { roomId: room.id, index: op.edge }; }
+      } else if (wh) {
+        this.selWall = { roomId: wh.object.userData.roomId, index: wh.object.userData.index };
+        this.selOpening = null;
+      }
+      if (wh) { this.haptic(c, 0.3, 15); this.refresh(); }
       return; // w zakładce „Ściany” meble są zablokowane
     }
     if (this.handleMeshes && this.handleMeshes.length) {
@@ -1822,6 +1985,7 @@ export class XRApp {
   updateGrab(dt) {
     if (this.resize) { this.updateResize(); return; }
     if (this.wallDrag) { this.updateWallDrag(); return; }
+    if (this.state === 'edit' && this.tab === 'walls' && (this.selWall || this.selOpening)) { this.updateWallStick(dt); return; }
     if (this.dollhouse) this.updateDollhouse(dt);
     else this.updateLocomotion(dt);
     if (this.alignDrag) {
@@ -2114,7 +2278,7 @@ export class XRApp {
     if (this.tab === 'walls' && this.state === 'edit' && look.wallStyle === 'off') look = { ...look, wallStyle: 'edges' }; // ściany muszą dać się wskazać
     this.view.setOptions({
       showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look, cameras: this.visibleCameras(), cameraSize: this.dollhouse ? 0.45 : 0.15,
-      selection: this.selWall ? { kind: 'edge', roomId: this.selWall.roomId, index: this.selWall.index } : null,
+      selection: this.selOpening ? { kind: 'opening', roomId: this.selOpening.roomId, id: this.selOpening.id } : this.selWall ? { kind: 'edge', roomId: this.selWall.roomId, index: this.selWall.index } : null,
     });
     this.view.rebuild(this.project);
     this.updateSelectionLabel();

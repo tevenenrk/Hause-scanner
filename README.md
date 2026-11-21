@@ -38,7 +38,9 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 **Menu w goglach**
 - Po wejściu („Edytuj w MR” albo „Makieta VR”) pojawia się **ekran startowy**. Wybierasz na nim **wersję układu mebli** (albo tworzysz nową jako kopię) i **tryb**: 🏠 *Jestem w mieszkaniu* (model na prawdziwych pokojach), 🧱 *Makieta* albo 🚶 *Spacer wirtualny*.
 - Potem menu ma zakładki: **Tryb** (przełączanie trybów, wyrównanie, sterowanie makietą i spacerem), **Meble** (nowa bryła, katalog, „Do potwierdzenia”, ukryte), **Ściany**, **Widok**, **Narzędzia** (miarka, kontrola skanu, ekran startowy) i **Wersje**. Na dole każdej zakładki są „Cofnij”, „Ponów” i „Zapisz i wyjdź”.
-- **Ściany w goglach**: w zakładce „Ściany” meble są zablokowane. Wskazujesz ścianę spustem i ciągniesz, żeby ją przesunąć (np. gdy skaner wziął zabudowaną szafę za ścianę). Są też przyciski ±1 i ±5 cm, „+ Drzwi tutaj”, „+ Okno tutaj” i zmiana wysokości pokoju.
+- **Ściany w goglach**: w zakładce „Ściany” meble są zablokowane. Spustem zaznaczasz ścianę, a **gałką przód/tył** odsuwasz ją albo przybliżasz względem siebie (np. gdy skaner wziął zabudowaną szafę za ścianę). Są też przyciski ±1 i ±5 cm, „+ Drzwi tutaj”, „+ Okno tutaj” i zmiana wysokości pokoju.
+- **Drzwi i okna w goglach**: spustem wskazujesz drzwi lub okno (albo dodajesz nowe). Zmieniasz szerokość, wysokość i parapet (±1/5/10 cm) oraz położenie: odległość od lewego i prawego narożnika, przyciski „← / →”, „do narożnika”, „na środek”, a gałka w bok przesuwa je wzdłuż ściany. Ustawiasz też kierunek otwierania drzwi.
+- **Celownik**: na panelu widać żółty pierścień w miejscu, w które celuje pilot, a wskazany przycisk ma żółtą ramkę.
 - Kolory mebli wybierasz z **kolorowych próbek** (bez kodów).
 
 **Edycja w MR (na Queście)**

@@ -137,6 +137,12 @@ export class Panel3D {
         ctx.strokeStyle = b.selected ? '#ffffff' : 'rgba(255,255,255,0.6)';
         ctx.stroke();
       }
+      // wskazany przycisk: gruba żółta ramka
+      if (hover) {
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = '#ffd400';
+        ctx.stroke();
+      }
       if (b.style === 'tabActive') {
         ctx.fillStyle = '#ffd400';
         ctx.fillRect(b.x + 14, b.y + b.h - 8, b.w - 28, 6);

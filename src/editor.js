@@ -1750,12 +1750,22 @@ export class Editor {
       html = `
         <h2>${op.type === 'door' ? 'Drzwi' : 'Okno'} · ${esc(sel.room.name)}</h2>
         <div class="row"><span>Rodzaj</span><select data-k="opType"><option value="door" ${op.type === 'door' ? 'selected' : ''}>Drzwi</option><option value="window" ${op.type === 'window' ? 'selected' : ''}>Okno</option></select></div>
+        <div class="sub">Ściana ${op.edge + 1}: ${Math.round(edgeOf(sel.room.outline, op.edge).length * 100)} cm. „Lewy” i „prawy” narożnik — patrząc na ścianę od środka pokoju.</div>
         <div class="row3">
-          <label>Od narożnika${num('opOffset', cm(op.offset), 1, 'min="0"')}</label>
-          <label>Szerokość${num('opWidth', cm(op.width), 1, 'min="10"')}</label>
-          <label>Wysokość${num('opHeight', cm(op.height), 1, 'min="10"')}</label>
+          <label>Szerokość [cm]${num('opWidth', cm(op.width), 1, 'min="10"')}</label>
+          <label>Wysokość [cm]${num('opHeight', cm(op.height), 1, 'min="10"')}</label>
+          <label>Parapet [cm]${num('opSill', cm(op.sill || 0), 1, 'min="0"')}</label>
         </div>
-        <div class="row"><span>Parapet [cm]</span>${num('opSill', cm(op.sill || 0), 1, 'min="0"')}</div>
+        <div class="row3" style="margin-top:6px">
+          <label>Od lewego narożnika${num('opOffset', cm(op.offset), 1, 'min="0"')}</label>
+          <label>Od prawego narożnika${num('opOffsetEnd', cm(Math.max(0, edgeOf(sel.room.outline, op.edge).length - op.offset - op.width)), 1, 'min="0"')}</label>
+          <label></label>
+        </div>
+        <div class="btns">
+          <button data-act="opPlace" data-v="left">⇤ Do lewego</button>
+          <button data-act="opPlace" data-v="center">Na środek</button>
+          <button data-act="opPlace" data-v="right">Do prawego ⇥</button>
+        </div>
         ${op.type === 'door' ? `<div class="row"><span>Otwierane</span><select data-k="opSwing">${swingOpts}</select></div>` : ''}
         ${op.type === 'door' ? `
         <h3>Prowadzą do pokoju</h3>
@@ -1871,6 +1881,7 @@ export class Editor {
       else if (k === 'opSwing') op.swing = v;
       else if (n !== null) {
         if (k === 'opOffset') op.offset = Math.max(0, n);
+        if (k === 'opOffsetEnd') op.offset = Math.max(0, edgeOf(sel.room.outline, op.edge).length - op.width - n);
         if (k === 'opWidth' && n > 0.1) op.width = n;
         if (k === 'opHeight' && n > 0.1) op.height = n;
         if (k === 'opSill') op.sill = Math.max(0, n);
@@ -1924,6 +1935,14 @@ export class Editor {
       case 'merge': this.mergeSelected(); break;
       case 'mergePick': this.startMergePick(); break;
       case 'addPhoto': document.getElementById('file-photo').click(); break;
+      case 'opPlace': {
+        const op = sel.op;
+        const L = edgeOf(sel.room.outline, op.edge).length;
+        op.offset = b.dataset.v === 'left' ? 0 : b.dataset.v === 'right' ? Math.max(0, L - op.width) : Math.max(0, (L - op.width) / 2);
+        this.lastPropsKey = null;
+        this.commit();
+        break;
+      }
       case 'camMatch': this.enterMatch(sel.cam); break;
       case 'camView': {
         const cam = sel.cam;
