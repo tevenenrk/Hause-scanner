@@ -307,7 +307,7 @@ export class ApartmentView {
     const pos = new THREE.Vector3(...cam.pos), target = new THREE.Vector3(...cam.target);
     const m = new THREE.Matrix4().lookAt(pos, target, new THREE.Vector3(0, 1, 0));
     const q = new THREE.Quaternion().setFromRotationMatrix(m);
-    const L = 0.45; // długość ostrosłupa [m]
+    const L = this.options.cameraSize || 0.45; // długość ostrosłupa [m]
     const hh = Math.tan(((cam.fov || 55) * Math.PI) / 360) * L, hw = hh * (cam.aspect || 4 / 3);
     const c = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => new THREE.Vector3(x, y, -L));
     const pts = [];

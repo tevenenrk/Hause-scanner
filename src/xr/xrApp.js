@@ -7,6 +7,7 @@ import { captureScene, sceneStats, floorPlanes } from './sceneCapture.js';
 import { convertScene, convertAllRooms, roomFrameFromFloor, listFloors, floorAtPoint } from '../scanConvert.js';
 import { applyScanShape, applyBoxShape } from '../scanShape.js';
 import { checkRoom, verdictText } from '../scanCheck.js';
+import { PhotoCapture, fovYFromProj } from './photoCapture.js';
 import { ApartmentView } from '../roomView.js';
 import {
   computeConflicts, snapToWalls, normalizeAngle, rad, polygonCentroid, alignRotationToNearestWall, worldToRoom, roomToWorld,
@@ -14,7 +15,7 @@ import {
 } from '../geometry.js';
 import {
   History, createFurniture, createOpening, findFurniture, uid, mergeFurniture, splitFurniture, resizeFurniture,
-  ensureVariants, activeVariant, switchVariant, createVariant, deleteVariant,
+  ensureVariants, activeVariant, switchVariant, createVariant, deleteVariant, addMedia, createCamera,
 } from '../model.js';
 import { computeClearances } from '../geometry.js';
 import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from '../labels.js';
@@ -25,7 +26,7 @@ import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from '../l
 function sessionInit(preferUnbounded) {
   return {
     requiredFeatures: [],
-    optionalFeatures: [...(preferUnbounded ? ['unbounded'] : []), 'local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors', 'hit-test'],
+    optionalFeatures: [...(preferUnbounded ? ['unbounded'] : []), 'local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors', 'hit-test', 'camera-access'],
   };
 }
 
@@ -200,6 +201,7 @@ export class XRApp {
     if (this.ended) return;
     this.ended = true;
     this.renderer.setAnimationLoop(null);
+    if (this.photo) this.photo.dispose();
     this.view.dispose();
     this.live.dispose();
     this.renderer.dispose();
@@ -296,6 +298,7 @@ export class XRApp {
     const pose = frame.getViewerPose(this.refSpace);
     if (pose) this.head = new THREE.Matrix4().fromArray(pose.transform.matrix);
     if (this.frameCount % 30 === 1 && this.head) this.floorLevel = this.estimateFloorY(this.isVR ? null : frame);
+    if (this.pendingPhoto && pose) this.processPhoto(pose);
     if (this.needDollPlace && this.head) {
       this.needDollPlace = false;
       this.placeDollInFront();
@@ -432,6 +435,10 @@ export class XRApp {
       rooms: () => { this.state = 'rooms'; this.updatePanel(); },
       goRoom: () => { this.state = 'edit'; if (this.dollhouse) this.dollhouse = false; this.enterWalk(arg); },
       exitWalk: () => this.exitWalk(),
+      photo: () => { this.photoReturn = this.selectedId ? 'furniture' : 'tools'; this.state = 'photo'; this.updatePanel(); },
+      photoTake: () => this.requestPhoto(null),
+      photoFurn: () => this.requestPhoto(this.selectedId),
+      photoBack: () => { this.state = 'edit'; this.refresh(); },
       tab: () => { this.tab = arg; this.state = 'edit'; if (arg === 'walls') this.selectedId = null; if (arg !== 'walls') this.selWall = null; this.refresh(); },
       start: () => { if (arg === 'menu') { this.state = 'start'; this.selectedId = null; this.selWall = null; this.refresh(); } else this.chooseMode(arg); },
       modeMR: () => { if (this.dollhouse) this.exitDollhouse(); else if (this.walking) this.exitWalk(); this.tab = 'mode'; this.refresh(); },
@@ -703,11 +710,12 @@ export class XRApp {
           [{ id: 'dimAdd:-10', label: '−10' }, { id: 'dimAdd:-5', label: '−5' }, { id: 'dimAdd:-1', label: '−1' }, { id: 'dimAdd:1', label: '+1' }, { id: 'dimAdd:5', label: '+5' }, { id: 'dimAdd:10', label: '+10' }],
           [...PALETTE.slice(0, 5).map((c) => ({ id: `setColor:${c}`, label: '', color: c, selected: c.toLowerCase() === String(f.color).toLowerCase() })), { id: 'colors', label: 'Więcej kolorów' }],
           [{ id: 'display:normal', label: 'Pełny', style: !f.display ? 'active' : undefined }, { id: 'display:transparent', label: 'Półprzezr.', style: f.display === 'transparent' ? 'active' : undefined }, { id: 'display:edges', label: 'Krawędzie', style: f.display === 'edges' ? 'active' : undefined }, { id: 'hide', label: 'Ukryj' }],
-          [{ id: 'snap', label: '⇥ Dosuń' }, { id: 'mergeStart', label: '⧉ Scal z…' }, { id: 'dup', label: '⧉ Duplikuj' }, { id: 'more', label: 'Więcej…' }],
+          [{ id: 'snap', label: '⇥ Dosuń' }, { id: 'mergeStart', label: '⧉ Scal z…' }, { id: 'dup', label: '⧉ Duplikuj' }, { id: 'photo', label: `📷 Zdjęcie${(f.photos || []).length ? ` (${f.photos.length})` : ''}` }, { id: 'more', label: 'Więcej…' }],
           [{ id: 'undo', label: '↶ Cofnij', disabled: !this.history.canUndo }, { id: 'del', label: '🗑 Usuń', style: 'danger' }, { id: 'deselect', label: '✓ Gotowe', style: 'primary' }],
         ],
       };
     }
+    if (st === 'photo') return this.buildPhotoPage();
     if (st === 'start') return this.buildStartPage();
     if (this.selWall && this.tab === 'walls') return this.buildWallPage();
     return this.buildTabPage();
@@ -814,7 +822,7 @@ export class XRApp {
       }
     } else if (tab === 'tools') {
       title = 'Narzędzia';
-      rows.push([{ id: 'measure', label: '📏 Miarka' }, { id: 'check', label: '✔ Kontrola skanu' }]);
+      rows.push([{ id: 'photo', label: `📷 Zdjęcia (${(this.project.cameras || []).length})` }, { id: 'measure', label: '📏 Miarka' }, { id: 'check', label: '✔ Kontrola skanu' }]);
       if (!this.isVR && !this.dollhouse && !this.walking) rows.push([{ id: 'align', label: '⌖ Wyrównaj model do pokoju' }]);
       rows.push([{ id: 'start:menu', label: '☰ Ekran startowy (tryb i wersja)' }]);
     } else if (tab === 'versions') {
@@ -824,6 +832,103 @@ export class XRApp {
       rows.push([{ id: 'varNew', label: '+ Nowa wersja (kopia bieżącej)', style: 'primary' }, { id: 'varDel', label: 'Usuń bieżącą', style: 'danger', disabled: ensureVariants(this.project).length <= 1 }]);
     }
     return { title, lines, rows: [tabRow, ...rows, bottom] };
+  }
+
+  /** Kamery zdjęć do pokazania — bez tych tuż przy głowie (zasłaniałyby widok zaraz po zrobieniu zdjęcia). */
+  visibleCameras() {
+    const cams = this.project.cameras || [];
+    if (!this.head || this.dollhouse) return cams;
+    const head = new THREE.Vector3().setFromMatrixPosition(this.head);
+    return cams.filter((c) => new THREE.Vector3(...c.pos).applyMatrix4(this.root.matrix).distanceTo(head) > 0.6);
+  }
+
+  // ======================= zdjęcia z gogli =======================
+  photoAllowed() {
+    return !this.isVR && !this.dollhouse && !this.walking;
+  }
+
+  buildPhotoPage() {
+    const sel = this.selectedId && findFurniture(this.project, this.selectedId);
+    const n = (this.project.cameras || []).length;
+    const lines = [];
+    if (!this.photoAllowed()) {
+      lines.push('Zdjęcia robisz w trybie 🏠 „W mieszkaniu” (kamera widzi prawdziwy pokój). Przełącz tryb w zakładce „Tryb”.');
+    } else {
+      lines.push('Spójrz na to, co chcesz sfotografować, i naciśnij spust poza panelem albo „Zrób zdjęcie”. Zdjęcie zapisze się razem z miejscem i kierunkiem — na makiecie pojawi się różowa kamera, a zdjęcie trafi do paczki dla AI.');
+      if (this.photo && this.photo.mode === 'video') lines.push('Kamera: zwykły obraz (kąt widzenia przybliżony — można go poprawić na PC).');
+      if (this.photo && this.photo.mode === 'xr') lines.push('Kamera: WebXR (dokładna pozycja i obiektyw).');
+    }
+    if (this.photoMsg) lines.push(this.photoMsg);
+    return {
+      title: `📷 Zdjęcia (${n})`,
+      lines,
+      image: this.lastPhoto || null,
+      rows: [
+        [{ id: 'photoTake', label: '📷 Zrób zdjęcie pomieszczenia', style: 'primary', disabled: !this.photoAllowed() || !!this.pendingPhoto }],
+        ...(sel ? [[{ id: 'photoFurn', label: `📷 Zdjęcie i przypnij do: ${sel.f.name}`, disabled: !this.photoAllowed() || !!this.pendingPhoto }]] : []),
+        [{ id: 'photoBack', label: '← Wróć', style: 'muted' }],
+      ],
+    };
+  }
+
+  /** Zlecenie zdjęcia — samo zdjęcie robimy w następnej klatce XR (tylko tam XRFrame jest ważny). */
+  requestPhoto(attachId) {
+    if (!this.photoAllowed()) { this.photoMsg = 'Przełącz na tryb „W mieszkaniu”.'; this.updatePanel(); return; }
+    this.pendingPhoto = { attachId };
+    this.photoMsg = 'Robię zdjęcie…';
+    this.updatePanel();
+  }
+
+  processPhoto(pose) {
+    if (!this.photo) this.photo = new PhotoCapture(this.renderer, this.session);
+    if (!this.photo.mode) {
+      if (this.photoStarting) return;
+      this.photoStarting = true;
+      this.photo.start(pose).then((ok) => {
+        this.photoStarting = false;
+        if (!ok) {
+          this.pendingPhoto = null;
+          this.photoMsg = `Brak dostępu do kamery gogli (${this.photo.error || 'odmowa'}). Zezwól przeglądarce na kamerę albo dodaj zdjęcia na PC.`;
+          this.photo = null;
+          this.updatePanel();
+        }
+      });
+      return;
+    }
+    const shot = this.photo.capture(pose);
+    if (!shot) return; // obraz jeszcze niegotowy — spróbujemy w kolejnej klatce
+    const req = this.pendingPhoto;
+    this.pendingPhoto = null;
+    this.savePhoto(shot, req.attachId);
+  }
+
+  savePhoto(shot, attachId) {
+    // kamera: świat XR -> układ mieszkania
+    const M = new THREE.Matrix4().fromArray(shot.matrix).premultiply(this.root.matrix.clone().invert());
+    const pos = new THREE.Vector3().setFromMatrixPosition(M);
+    const fwd = new THREE.Vector3(0, 0, -1).transformDirection(M);
+    const target = pos.clone().addScaledVector(fwd, 2);
+    const found = attachId && findFurniture(this.project, attachId);
+    const n = (this.project.cameras || []).length + 1;
+    const name = found ? `${found.f.name} (zdjęcie)` : `Zdjęcie ${n}`;
+    const mediaId = addMedia(this.project, shot.data, { w: shot.w, h: shot.h, name: `${name}.jpg` });
+    const cam = createCamera({
+      name, mediaId,
+      pos: pos.toArray().map((v) => Math.round(v * 1000) / 1000),
+      target: target.toArray().map((v) => Math.round(v * 1000) / 1000),
+      fov: Math.round(fovYFromProj(shot.proj) * 10) / 10,
+      aspect: shot.w / shot.h,
+      notes: shot.mode === 'xr' ? 'Zdjęcie z gogli (WebXR, dokładna pozycja).' : 'Zdjęcie z gogli (kąt widzenia przybliżony).',
+    });
+    cam.source = shot.mode === 'xr' ? 'quest-webxr' : 'quest-video';
+    if (!this.project.cameras) this.project.cameras = [];
+    this.project.cameras.push(cam);
+    if (found) { found.f.photos = found.f.photos || []; found.f.photos.push(mediaId); }
+    this.lastPhoto = shot.data;
+    this.photoMsg = `✓ Zapisano: ${name}${found ? ' — przypięte do mebla' : ''}.`;
+    const c = this.controllers.find((x) => x.visible);
+    if (c) this.haptic(c, 0.6, 60);
+    this.commit();
   }
 
   // ======================= ściany w goglach =======================
@@ -1554,6 +1659,10 @@ export class XRApp {
       if (fp) this.alignDrag = { c, last: fp };
       return;
     }
+    if (this.state === 'photo') {
+      this.requestPhoto(this.photoReturn === 'furniture' ? this.selectedId : null);
+      return;
+    }
     if (this.state === 'measure') {
       const p = this.measureHit(c);
       if (p) {
@@ -2032,7 +2141,7 @@ export class XRApp {
     let look = this.lookFor();
     if (this.tab === 'walls' && this.state === 'edit' && look.wallStyle === 'off') look = { ...look, wallStyle: 'edges' }; // ściany muszą dać się wskazać
     this.view.setOptions({
-      showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look, cameras: this.project.cameras || [],
+      showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look, cameras: this.visibleCameras(), cameraSize: this.dollhouse ? 0.45 : 0.15,
       selection: this.selWall ? { kind: 'edge', roomId: this.selWall.roomId, index: this.selWall.index } : null,
     });
     this.view.rebuild(this.project);

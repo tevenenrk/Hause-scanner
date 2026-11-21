@@ -41,6 +41,23 @@ export class Panel3D {
     for (const l of this.page.lines || []) lines.push(...this.wrap(l, PX_W - PAD * 2));
     this.wrapped = lines;
     let y = PAD + (this.page.title ? 56 : 0) + lines.length * LINE_H + (lines.length ? GAP : 0);
+    // miniatura zdjęcia (page.image = data URL)
+    this.imgBox = null;
+    if (this.page.image) {
+      if (!this._img || this._img.src !== this.page.image) {
+        const el = new Image();
+        el.onload = () => { if (this.page.image === el.src) { this.layout(); this.draw(); } };
+        el.src = this.page.image;
+        this._img = el;
+      }
+      if (this._img.complete && this._img.naturalWidth) {
+        const iw = this._img.naturalWidth, ih = this._img.naturalHeight;
+        const maxW = PX_W - PAD * 2, maxH = 320;
+        const k = Math.min(maxW / iw, maxH / ih);
+        this.imgBox = { x: PAD + (maxW - iw * k) / 2, y, w: iw * k, h: ih * k };
+        y += ih * k + GAP;
+      }
+    }
     this.buttons = [];
     for (const row of this.page.rows || []) {
       const n = row.length;
@@ -93,6 +110,13 @@ export class Panel3D {
     ctx.fillStyle = '#c9d1db';
     ctx.textBaseline = 'top';
     for (const l of this.wrapped || []) { ctx.fillText(l, PAD, y); y += LINE_H; }
+    if (this.imgBox && this._img) {
+      const b = this.imgBox;
+      ctx.drawImage(this._img, b.x, b.y, b.w, b.h);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.strokeRect(b.x, b.y, b.w, b.h);
+    }
     for (const b of this.buttons) {
       const hover = b.id === this.hoverId && !b.disabled;
       const colors = {

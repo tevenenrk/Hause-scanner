@@ -50,6 +50,12 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - **🚶 Spacer wirtualny**: także w MR. Chodzisz po makiecie jak w grach VR (lewa gałka: ruch, prawa: obrót o 30°, prawa do przodu: teleport). „Wróć do 1:1 w pokoju” ponownie nakłada model na prawdziwe mieszkanie,
 - **pełne parametry w goglach** („Więcej…”): kształt, wysokość nad podłogą, przesuwanie o 1 cm, kolor, „Jak w skanie”, potwierdzenie, rozdzielanie brył, wolne miejsce wokół (linie z odległościami), lista ukrytych mebli, wersje układu.
 
+**Zdjęcia z gogli**
+- „Narzędzia → 📷 Zdjęcia” albo „📷 Zdjęcie” w panelu mebla. Patrzysz na to, co chcesz sfotografować, i naciskasz spust poza panelem (albo „Zrób zdjęcie”).
+- Zdjęcie zapisuje się razem z **miejscem i kierunkiem** kamery: na makiecie pojawia się różowa kamera, a zdjęcie trafia do paczki dla AI. Zdjęcie mebla jest od razu do niego przypięte.
+- Gogle dają obraz na dwa sposoby. Przez **WebXR camera-access** pozycja i obiektyw są dokładne. Przez zwykłą kamerę przeglądarki kąt widzenia jest przybliżony i można go poprawić na PC („Dopasuj widok do zdjęcia”). Przy pierwszym zdjęciu przeglądarka zapyta o dostęp do kamery.
+- Zdjęcia robi się w trybie „W mieszkaniu”, bo w makiecie i w spacerze kamera nie widzi modelu.
+
 **Zdjęcia, kamery i paczka dla AI (PC)**
 - do każdego mebla możesz przypiąć **zdjęcia** i **link** (np. do sklepu). Mebel, którego jeszcze nie ma, to nowa bryła ze zdjęciem; w paczce dla AI ma status „nowy / planowany”,
 - **📷 + Zdjęcie pomieszczenia** tworzy na makiecie **kamerę** (różowy ostrosłup). W trybie „Dopasuj widok do zdjęcia” zdjęcie leży półprzezroczyście na makiecie, a Ty ustawiasz widok i kąt widzenia, aż bryły pokryją się ze zdjęciem. Pozycja kamery jest zapisywana,

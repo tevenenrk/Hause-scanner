@@ -95,6 +95,7 @@ function sceneData(project) {
       position: c.pos.map(r2),
       lookAt: c.target.map(r2),
       verticalFovDeg: c.fov,
+      source: c.source === 'quest-webxr' ? 'gogle (WebXR, dokładna pozycja)' : c.source === 'quest-video' ? 'gogle (kąt przybliżony)' : 'PC (pozycja dopasowana ręcznie)',
       aspect: r2(c.aspect || 4 / 3),
       notes: c.notes || undefined,
     };

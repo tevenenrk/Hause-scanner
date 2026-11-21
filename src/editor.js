@@ -51,7 +51,7 @@ export function loadImageFile(file, maxSize = 1600) {
 }
 
 export function safeName(s) {
-  return String(s || 'projekt').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'projekt';
+  return String(s || 'projekt').replace(/ł/g, 'l').replace(/Ł/g, 'L').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'projekt';
 }
 
 export class Editor {
