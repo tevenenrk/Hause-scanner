@@ -30,7 +30,7 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - [x] Strzałka wskazująca pytany mebel (gogle i PC) i kontrola kompletności skanu (dziury, brakujące ściany, podejrzane meble).
 - [x] Etap 2 odświeżenia: ekran startowy (tryb + wersja), menu z zakładkami, kolory jako próbki, edycja ścian w goglach.
 - [x] Etap 3: zdjęcia z gogli (kamera Questa) z pozycją kamery, przypinane do mebli.
-- [ ] Etap 4: odświeżenie interfejsu na PC.
+- [x] Etap 4: odświeżenie interfejsu na PC (pogrupowany pasek, zakładki, sekcje, próbki kolorów, pomoc, nowy ekran startowy).
 - [ ] Łączenie drzwi także w goglach (na razie na PC).
 
 ## Etap 2 — całe mieszkanie

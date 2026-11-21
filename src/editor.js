@@ -13,7 +13,7 @@ import {
   History, createFurniture, createOpening, createRoom, findFurniture, snapshotScanned, projectToJSON, projectFromJSON, uid,
   mergeFurniture, splitFurniture, resizeFurniture, linkDoors, unlinkDoor, addMedia, createCamera, pruneMedia, ensureVariants, switchVariant, createVariant, deleteVariant, activeVariant,
 } from './model.js';
-import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from './labels.js';
+import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, PALETTE, typeName, typeColor } from './labels.js';
 import { saveProject } from './store.js';
 import { applyScanShape, applyBoxShape } from './scanShape.js';
 import { checkRoom, verdictText } from './scanCheck.js';
@@ -1191,9 +1191,6 @@ export class Editor {
     for (const b of document.querySelectorAll('[data-view]')) b.addEventListener('click', () => this.setView(b.dataset.view));
     $('btn-undo').addEventListener('click', () => this.undo());
     $('btn-redo').addEventListener('click', () => this.redo());
-    $('btn-add-door').addEventListener('click', () => this.addOpening('door'));
-    $('btn-add-window').addEventListener('click', () => this.addOpening('window'));
-    $('btn-add-room').addEventListener('click', () => this.addRoom());
     $('btn-export-json').addEventListener('click', () => this.exportJSON(true));
     $('btn-export-json-light').addEventListener('click', () => this.exportJSON(false));
     $('btn-export-glb').addEventListener('click', () => this.exportGLB());
@@ -1201,15 +1198,17 @@ export class Editor {
     $('btn-scan').addEventListener('click', () => this.onStartXR && this.onStartXR('scan', this));
     $('btn-mr').addEventListener('click', () => this.onStartXR && this.onStartXR('edit', this));
     $('btn-vr').addEventListener('click', () => this.onStartXR && this.onStartXR('vr', this));
-    this.el.variants.addEventListener('change', (e) => {
-      if (e.target.id === 'variant-select') {
-        switchVariant(this.project, e.target.value);
-        this.selection = null; this.extra.clear();
-        this.commit();
-        this.toast(`Wersja: ${activeVariant(this.project).name}`);
-      }
-    });
     this.el.variants.addEventListener('click', (e) => {
+      const it = e.target.closest('[data-varid]');
+      if (it) {
+        if (it.dataset.varid !== this.project.activeVariantId) {
+          switchVariant(this.project, it.dataset.varid);
+          this.selection = null; this.extra.clear();
+          this.commit();
+          this.toast(`Wersja: ${activeVariant(this.project).name}`);
+        }
+        return;
+      }
       const b = e.target.closest('[data-var]');
       if (!b) return;
       const act = b.dataset.var;
@@ -1239,16 +1238,47 @@ export class Editor {
 
     // menu rozwijane
     const addMenu = $('menu-add');
-    addMenu.innerHTML = TEMPLATES.map((t, i) => {
-      const n = t.name || typeName(t.type);
-      return `<button data-tpl="${i}">${esc(n)} <span class="hint">${Math.round(t.w * 100)}×${Math.round(t.d * 100)}×${Math.round(t.h * 100)}</span></button>`;
-    }).join('');
+    addMenu.innerHTML = `
+      <span class="menu-title">Meble i bryły</span>
+      <div class="tpl-grid">${TEMPLATES.map((t, i) => `<button data-tpl="${i}"><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${typeColor(t.type)}"></span>${esc(t.name || typeName(t.type))}<span class="tpl-size">${Math.round(t.w * 100)}×${Math.round(t.d * 100)}×${Math.round(t.h * 100)}</span></button>`).join('')}</div>
+      <hr><span class="menu-title">Konstrukcja</span>
+      <div class="tpl-grid">
+        <button data-add="door">🚪 Drzwi na zaznaczonej ścianie</button>
+        <button data-add="window">🪟 Okno na zaznaczonej ścianie</button>
+        <button data-add="room">🗺 Pusty pokój</button>
+      </div>
+      <hr><span class="menu-title">Zdjęcia</span>
+      <div class="tpl-grid">
+        <button data-add="campic">📷 Zdjęcie pomieszczenia (z kamerą)</button>
+        <button data-add="photo">📷 Zdjęcie zaznaczonego mebla</button>
+      </div>`;
     addMenu.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-tpl]');
+      const b = e.target.closest('[data-tpl],[data-add]');
       if (!b) return;
-      this.addFurniture(TEMPLATES[+b.dataset.tpl]);
       addMenu.classList.remove('open');
+      if (b.dataset.tpl !== undefined) return this.addFurniture(TEMPLATES[+b.dataset.tpl]);
+      const a = b.dataset.add;
+      if (a === 'door' || a === 'window') this.addOpening(a);
+      else if (a === 'room') this.addRoom();
+      else if (a === 'campic') $('file-campic').click();
+      else if (a === 'photo') {
+        const s0 = this.selected();
+        if (!s0 || !s0.f) return this.toast('Najpierw zaznacz mebel, do którego dodać zdjęcie.');
+        $('file-photo').click();
+      }
     });
+    // zakładki lewego panelu
+    this.sideTab = 'rooms';
+    $('side-tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-side]');
+      if (!b) return;
+      this.sideTab = b.dataset.side;
+      this.renderSideTabs();
+      if (this.sideTab === 'check' && !this.checkResults) this.runCheck();
+    });
+    // pomoc
+    $('btn-help').addEventListener('click', () => { $('help').hidden = false; });
+    $('help').addEventListener('click', (e) => { if (e.target.id === 'help' || e.target.closest('[data-close]')) $('help').hidden = true; });
     for (const [btn, menu] of [['btn-add', 'menu-add'], ['btn-show', 'menu-show'], ['btn-export', 'menu-export']]) {
       $(btn).addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1330,6 +1360,9 @@ export class Editor {
   }
 
   onKey(e) {
+    const help = document.getElementById('help');
+    if (!help.hidden) { if (e.key === 'Escape') help.hidden = true; return; }
+    if (e.key === '?' && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || '').toUpperCase())) { help.hidden = false; return; }
     if (this.el.root.hidden) return;
     const tag = (e.target.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
@@ -1376,12 +1409,16 @@ export class Editor {
 
   renderVariants() {
     const vs = ensureVariants(this.project);
-    const opts = vs.map((v) => `<option value="${v.id}" ${v.id === this.project.activeVariantId ? 'selected' : ''}>${esc(v.name)}</option>`).join('');
+    const items = vs.map((v) => {
+      const n = v.id === this.project.activeVariantId ? this.project.rooms.reduce((k, r) => k + r.furniture.length, 0) : Object.values(v.furniture || {}).reduce((k, l) => k + l.length, 0);
+      return `<div class="var-item ${v.id === this.project.activeVariantId ? 'active' : ''}" data-varid="${v.id}">${v.id === this.project.activeVariantId ? '●' : '○'} ${esc(v.name)}<span class="meta">${n} mebli</span></div>`;
+    }).join('');
     this.el.variants.innerHTML = `
-      <h3>Wersja układu mebli</h3>
-      <select id="variant-select" aria-label="Wersja układu">${opts}</select>
+      <h3>Wersje układu mebli</h3>
+      <p class="hint">Każda wersja to osobne przemeblowanie tego samego mieszkania. Kliknij, aby przełączyć.</p>
+      ${items}
       <div class="btns">
-        <button data-var="new" title="Kopia bieżącego układu do przemeblowania">+ Nowa wersja</button>
+        <button data-var="new" class="primary" title="Kopia bieżącego układu do przemeblowania">＋ Nowa wersja (kopia)</button>
         <button data-var="rename">Zmień nazwę</button>
         <button data-var="del" class="danger" ${vs.length <= 1 ? 'disabled' : ''}>Usuń</button>
       </div>`;
@@ -1393,15 +1430,33 @@ export class Editor {
     const s = this.selection;
     const items = cams.map((c) => `
       <div class="cam-item ${s && s.kind === 'camera' && s.id === c.id ? 'selected' : ''}" data-cam="${c.id}">
-        ${c.mediaId && media[c.mediaId] ? `<img src="${media[c.mediaId].data}" alt="">` : '📷'}<span>${esc(c.name)}</span>
+        ${c.mediaId && media[c.mediaId] ? `<img src="${media[c.mediaId].data}" alt="">` : '📷'}<span>${esc(c.name)}<small>${c.source === 'quest-webxr' ? 'z gogli · dokładna pozycja' : c.source === 'quest-video' ? 'z gogli · kąt przybliżony' : 'z komputera · pozycja dopasowana'}</small></span>
       </div>`).join('');
+    const furnPhotos = this.project.rooms.reduce((k, r) => k + r.furniture.reduce((m, f) => m + (f.photos || []).length, 0), 0);
     this.el.cameras.innerHTML = `
-      <h3>Zdjęcia z perspektywą</h3>
-      ${items || '<p class="hint">Dodaj zdjęcie pokoju i ustaw, skąd było zrobione — kamera pojawi się na makiecie.</p>'}
-      <div class="btns"><button data-cam-add>📷 + Zdjęcie pomieszczenia</button></div>`;
+      <h3>Zdjęcia pomieszczeń (${cams.length})</h3>
+      ${items || '<p class="hint">Zrób zdjęcie goglami (Narzędzia → Zdjęcia) albo dodaj je tutaj i dopasuj widok — różowa kamera pokaże na makiecie, skąd je zrobiono.</p>'}
+      <div class="btns"><button data-cam-add class="primary">📷 ＋ Zdjęcie pomieszczenia</button></div>
+      <p class="hint">Zdjęcia mebli (${furnPhotos}) dodajesz w panelu mebla. Wszystko trafia do „Plik → Paczka dla AI”.</p>`;
+  }
+
+  renderSideTabs() {
+    const unv = this.project.rooms.reduce((n, r) => n + r.furniture.filter((f) => !f.verified && !f.hidden).length, 0);
+    const cams = (this.project.cameras || []).length;
+    const issues = this.checkResults ? this.checkResults.reduce((n, { res }) => n + res.issues.filter((i) => i.level !== 'info').length, 0) : null;
+    const verdict = this.checkResults ? (this.checkResults.some(({ res }) => res.verdict === 'error') ? 'error' : this.checkResults.some(({ res }) => res.verdict === 'warn') ? 'warn' : '') : '';
+    const tabs = [
+      ['rooms', '🏠', 'Pokoje', this.conflicts.size ? `<span class="count error">${this.conflicts.size}</span>` : unv ? `<span class="count">${unv}</span>` : ''],
+      ['variants', '🔀', 'Wersje', `<span class="count">${ensureVariants(this.project).length}</span>`],
+      ['photos', '📷', 'Zdjęcia', cams ? `<span class="count">${cams}</span>` : ''],
+      ['check', '✔', 'Kontrola', issues ? `<span class="count ${verdict}">${issues}</span>` : ''],
+    ];
+    document.getElementById('side-tabs').innerHTML = tabs.map(([k, ic, n, c]) => `<button data-side="${k}" class="${this.sideTab === k ? 'active' : ''}" role="tab"><span class="ic">${ic}</span>${n}${c}</button>`).join('');
+    for (const pane of document.querySelectorAll('#sidebar-left .pane')) pane.hidden = pane.dataset.pane !== this.sideTab;
   }
 
   renderPanels() {
+    this.renderSideTabs();
     if (this.el.check && this.project) this.renderCheck();
     this.renderVariants();
     this.renderCameras();
@@ -1429,7 +1484,7 @@ export class Editor {
         const unv = f.verified ? '' : '<span class="badge unverified" title="Do potwierdzenia">?</span>';
         const sel = (s && s.kind === 'furniture' && s.id === f.id) || this.extra.has(f.id);
         return `<div class="item ${sel ? 'selected' : ''} ${f.hidden ? 'hidden-item' : ''}" data-fid="${f.id}" title="Dwuklik: pokaż na widoku">
-          <span class="nm">${esc(f.name)}</span>${unv}${badge}
+          <span class="sw" style="background:${esc(f.color)}"></span><span class="nm">${esc(f.name)}</span>${unv}${badge}
           <button class="eye" data-eye="${f.id}" title="${f.hidden ? 'Pokaż' : 'Ukryj (np. mebel tymczasowy)'}">${f.hidden ? '◌' : '●'}</button></div>`;
       }).join('');
       return `<div class="room-block">
@@ -1437,7 +1492,7 @@ export class Editor {
         ${items || '<div class="item hint">brak mebli</div>'}
       </div>`;
     }).join('');
-    this.el.roomList.innerHTML = `<h3>Pokoje i meble</h3>${html || '<p class="hint">Brak pokoi. Zeskanuj pokój goglami albo dodaj pusty pokój (+ Pokój).</p>'}`;
+    this.el.roomList.innerHTML = `<h3>Pokoje i meble</h3>${html || '<p class="hint">Brak pokoi. Zeskanuj pokój goglami (🥽 Skanuj) albo dodaj pusty pokój (＋ Dodaj → Pusty pokój).</p>'}`;
   }
 
   onListClick(e) {
@@ -1592,62 +1647,77 @@ export class Editor {
       if (f.shape === 'compound') shapeList.unshift(['compound', `Złożony (${f.parts.length} bryły)`]);
       const shapeOpts = shapeList.map(([v, n]) => `<option value="${v}" ${v === f.shape ? 'selected' : ''}>${n}</option>`).join('');
       const sc = f.scanned;
+      const photos = (f.photos || []).filter((id) => (this.project.media || {})[id]);
+      const open = (k, def) => (this.propOpen && this.propOpen[k] !== undefined ? this.propOpen[k] : def) ? 'open' : '';
       html = `
-        <h2>${esc(f.name)}</h2>
-        <div class="row"><span>Nazwa</span><input data-k="name" value="${esc(f.name)}"></div>
-        <div class="row"><span>Typ</span><select data-k="type">${typeOpts}</select></div>
-        <div class="row"><span>Kształt</span><select data-k="shape">${shapeOpts}</select></div>
-        <div class="row"><span>Mocowanie</span><select data-k="mount">
-          <option value="floor" ${mountOf(f) === 'floor' ? 'selected' : ''}>stoi na podłodze</option>
-          <option value="wall" ${mountOf(f) === 'wall' ? 'selected' : ''}>wisi na ścianie (przykleja się)</option>
-        </select></div>
-        <div class="btns">
-          <button data-act="shapeBox" ${f.shape === 'box' ? 'class="primary"' : ''}>▭ Prostopadłościan</button>
-          <button data-act="shapeScan" ${f.fromScan ? 'class="primary"' : ''} title="Uproszczony kształt z trójkątów skanu">⌓ Kształt ze skanu</button>
-        </div>
-        <h3>Wymiary [cm]</h3>
-        <div class="row3">
-          <label>${f.shape === 'cylinder' ? 'Średnica X' : 'Szerokość'}${num('w', cm(f.w), 0.5, 'min="1"')}</label>
-          <label>${f.shape === 'cylinder' ? 'Średnica Z' : 'Głębokość'}${num('d', cm(f.d), 0.5, 'min="1"')}</label>
-          <label>Wysokość${num('h', cm(f.h), 0.5, 'min="1"')}</label>
-        </div>
-        ${f.shape === 'L' ? `<div class="row3"><label>Ramię boczne${num('aw', cm(f.aw), 0.5)}</label><label>Ramię tylne${num('ad', cm(f.ad), 0.5)}</label><label></label></div>` : ''}
-        ${sc ? `<div class="note">Ze skanu: ${Math.round(sc.w * 100)}×${Math.round(sc.d * 100)}×${Math.round(sc.h * 100)} cm. Popraw wymiary, mierząc miarką.</div>` : ''}
-        <h3>Położenie</h3>
-        <div class="row3">
-          <label>X [cm]${num('x', cm(f.x), 1)}</label>
-          <label>Z [cm]${num('z', cm(f.z), 1)}</label>
-          <label>Nad podłogą${num('y', cm(f.y || 0), 1, 'min="0"')}</label>
-        </div>
-        <div class="row"><span>Obrót [°]</span>${num('rotDeg', Math.round(deg(f.rot || 0) * 10) / 10, 1)}</div>
-        <div class="btns">
-          <button data-act="rot" data-v="-90">⟲ 90°</button><button data-act="rot" data-v="-15">⟲ 15°</button>
-          <button data-act="rot" data-v="15">⟳ 15°</button><button data-act="rot" data-v="90">⟳ 90°</button>
-        </div>
-        <div class="btns">
-          <button data-act="alignWall" title="Obróć równolegle do najbliższej ściany">∥ Wyrównaj do ściany</button>
-          <button data-act="snapWall" title="Dosuń do najbliższej ściany (do 30 cm)">⇥ Dosuń do ściany</button>
-        </div>
-        ${conf.length ? `<div class="conflicts">⚠ ${esc(conf.map((c) => (c.kind === 'furniture' ? 'koliduje z: ' : c.kind === 'wall' ? 'wystaje za ' : 'w ') + c.label).join('; '))}</div>` : '<div class="note" style="color:var(--ok)">✓ Mieści się — brak kolizji</div>'}
-        ${clear.length ? `<h3>Wolne miejsce wokół</h3><div class="clear-list">${clear.map((c) => `<span>${dirNames[c.dir]}</span><b>${fmtCm(c.dist)}</b>`).join('')}</div>` : ''}
-        <h3>Inne</h3>
-        <div class="row"><span>Kolor</span><input type="color" data-k="color" value="${esc(f.color)}"></div>
-        <div class="row"><span>Wygląd</span><select data-k="display">
-          <option value="" ${!f.display ? 'selected' : ''}>normalny</option>
-          <option value="transparent" ${f.display === 'transparent' ? 'selected' : ''}>półprzezroczysty</option>
-          <option value="edges" ${f.display === 'edges' ? 'selected' : ''}>tylko krawędzie</option>
-        </select></div>
-        <h3>Zdjęcia mebla</h3>
-        <div class="photos">${(f.photos || []).filter((id) => (this.project.media || {})[id]).map((id) => `<div class="ph"><img src="${this.project.media[id].data}" data-photo="${id}" alt=""><button data-rmphoto="${id}" title="Usuń zdjęcie">×</button></div>`).join('') || '<span class="note">Brak. Dodaj zdjęcie, żeby było wiadomo, jaki to mebel (także mebel, którego jeszcze nie ma).</span>'}</div>
-        <div class="btns"><button data-act="addPhoto">📷 + Dodaj zdjęcie</button></div>
-        <div class="row"><span>Link</span><input data-k="link" type="url" placeholder="https://… (sklep, producent)" value="${esc(f.link || '')}"></div>
-        <div class="row"><span>Ukryty</span><label><input type="checkbox" data-k="hidden" ${f.hidden ? 'checked' : ''}> tymczasowy / poza makietą</label></div>
-        <div class="row"><span>Potwierdzony</span><label><input type="checkbox" data-k="verified" ${f.verified ? 'checked' : ''}> typ sprawdzony</label></div>
-        <div class="row"><span>Notatki</span><textarea data-k="notes">${esc(f.notes)}</textarea></div>
-        ${f.shape === 'compound' ? '<div class="note">Mebel złożony ze scalonych brył: przesuwa się i obraca jako całość, kolizje liczone są dla każdej bryły osobno.</div>' : ''}
-        <div class="btns">
+        <h2><span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:4px;background:${esc(f.color)}"></span>${esc(f.name)}</h2>
+        <div class="sub">${esc(typeName(f.type))} · ${Math.round(f.w * 100)}×${Math.round(f.d * 100)}×${Math.round(f.h * 100)} cm · ${esc(sel.room.name)}${f.shape === 'compound' ? ` · złożony z ${f.parts.length} brył` : ''}${f.scanned ? '' : ' · nowy (nie ze skanu)'}</div>
+        <div class="status ${conf.length ? 'bad' : 'ok'}">${conf.length ? `⚠ ${esc(conf.map((c) => (c.kind === 'furniture' ? 'koliduje z: ' : c.kind === 'wall' ? 'wystaje za ' : 'stoi w: ') + c.label).join('; '))}` : '✓ Mieści się — brak kolizji'}</div>
+
+        <details ${open('basic', true)} data-sec="basic"><summary>📝 Podstawowe</summary><div class="body">
+          <div class="row"><span>Nazwa</span><input data-k="name" value="${esc(f.name)}"></div>
+          <div class="row"><span>Typ</span><select data-k="type">${typeOpts}</select></div>
+          <div class="row"><span>Mocowanie</span><select data-k="mount">
+            <option value="floor" ${mountOf(f) === 'floor' ? 'selected' : ''}>stoi na podłodze</option>
+            <option value="wall" ${mountOf(f) === 'wall' ? 'selected' : ''}>wisi na ścianie (przykleja się)</option>
+          </select></div>
+          <div class="row"><span>Kształt</span><select data-k="shape">${shapeOpts}</select></div>
+          <div class="btns">
+            <button data-act="shapeBox" ${f.shape === 'box' ? 'class="primary"' : ''}>▭ Prostopadłościan</button>
+            <button data-act="shapeScan" ${f.fromScan ? 'class="primary"' : ''} title="Uproszczony kształt z trójkątów skanu">⌓ Kształt ze skanu</button>
+          </div>
+        </div></details>
+
+        <details ${open('size', true)} data-sec="size"><summary>📐 Wymiary i położenie</summary><div class="body">
+          <div class="row3">
+            <label>${f.shape === 'cylinder' ? 'Średnica X' : 'Szerokość'} [cm]${num('w', cm(f.w), 0.5, 'min="1"')}</label>
+            <label>${f.shape === 'cylinder' ? 'Średnica Z' : 'Głębokość'} [cm]${num('d', cm(f.d), 0.5, 'min="1"')}</label>
+            <label>Wysokość [cm]${num('h', cm(f.h), 0.5, 'min="1"')}</label>
+          </div>
+          ${f.shape === 'L' ? `<div class="row3"><label>Ramię boczne${num('aw', cm(f.aw), 0.5)}</label><label>Ramię tylne${num('ad', cm(f.ad), 0.5)}</label><label></label></div>` : ''}
+          ${sc ? `<div class="note">Ze skanu: ${Math.round(sc.w * 100)}×${Math.round(sc.d * 100)}×${Math.round(sc.h * 100)} cm — popraw, mierząc miarką.</div>` : ''}
+          <div class="row3" style="margin-top:6px">
+            <label>X [cm]${num('x', cm(f.x), 1)}</label>
+            <label>Z [cm]${num('z', cm(f.z), 1)}</label>
+            <label>Nad podłogą${num('y', cm(f.y || 0), 1, 'min="0"')}</label>
+          </div>
+          <div class="row"><span>Obrót [°]</span>${num('rotDeg', Math.round(deg(f.rot || 0) * 10) / 10, 1)}</div>
+          <div class="btns">
+            <button data-act="rot" data-v="-90">⟲ 90°</button><button data-act="rot" data-v="-15">⟲ 15°</button>
+            <button data-act="rot" data-v="15">⟳ 15°</button><button data-act="rot" data-v="90">⟳ 90°</button>
+          </div>
+          <div class="btns">
+            <button data-act="alignWall" title="Obróć równolegle do najbliższej ściany">∥ Równolegle do ściany</button>
+            <button data-act="snapWall" title="Dosuń do najbliższej ściany (do 30 cm)">⇥ Dosuń do ściany</button>
+          </div>
+          ${clear.length ? `<div class="note" style="margin-top:6px">Wolne miejsce wokół:</div><div class="clear-list">${clear.map((c) => `<span>${dirNames[c.dir]}</span><b style="color:${c.dist < 0.6 ? 'var(--danger)' : 'inherit'}">${fmtCm(c.dist)}</b>`).join('')}</div>` : ''}
+        </div></details>
+
+        <details ${open('look', true)} data-sec="look"><summary>🎨 Wygląd</summary><div class="body">
+          <div class="swatches">${PALETTE.map((c) => `<button class="sw ${c.toLowerCase() === String(f.color).toLowerCase() ? 'on' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('')}
+            <input type="color" data-k="color" value="${esc(f.color)}" title="Własny kolor"></div>
+          <div class="row" style="margin-top:8px"><span>Widoczność</span><select data-k="display">
+            <option value="" ${!f.display ? 'selected' : ''}>pełny</option>
+            <option value="transparent" ${f.display === 'transparent' ? 'selected' : ''}>półprzezroczysty</option>
+            <option value="edges" ${f.display === 'edges' ? 'selected' : ''}>tylko krawędzie</option>
+          </select></div>
+          <div class="row"><span>Na makiecie</span><label><input type="checkbox" data-k="hidden" ${f.hidden ? 'checked' : ''}> ukryty (np. tymczasowy)</label></div>
+        </div></details>
+
+        <details ${open('photos', photos.length > 0 || !!f.link)} data-sec="photos"><summary>📷 Zdjęcia i link (${photos.length})</summary><div class="body">
+          <div class="photos">${photos.map((id) => `<div class="ph"><img src="${this.project.media[id].data}" data-photo="${id}" alt=""><button data-rmphoto="${id}" title="Usuń zdjęcie">×</button></div>`).join('') || '<span class="note">Dodaj zdjęcie, żeby było wiadomo, jaki to mebel — także mebel, którego jeszcze nie ma w mieszkaniu.</span>'}</div>
+          <div class="btns"><button data-act="addPhoto">📷 ＋ Dodaj zdjęcie</button></div>
+          <div class="row"><span>Link</span><input data-k="link" type="url" placeholder="https://… (sklep, producent)" value="${esc(f.link || '')}"></div>
+        </div></details>
+
+        <details ${open('notes', false)} data-sec="notes"><summary>🗒 Notatki i status</summary><div class="body">
+          <div class="row"><span>Potwierdzony</span><label><input type="checkbox" data-k="verified" ${f.verified ? 'checked' : ''}> typ sprawdzony</label></div>
+          <textarea data-k="notes" placeholder="np. do wymiany, wymiary z instrukcji…">${esc(f.notes)}</textarea>
+        </div></details>
+
+        <div class="actions">
           <button data-act="mergePick" title="Kliknij potem drugą bryłę (albo Shift/Ctrl + klik)">⧉ Scal z…</button>
-          ${f.shape === 'compound' ? '<button data-act="split">✂ Rozdziel bryły</button>' : ''}
+          ${f.shape === 'compound' ? '<button data-act="split">✂ Rozdziel</button>' : ''}
           <button data-act="dup">⧉ Duplikuj</button>
           ${sc ? '<button data-act="resetScan" title="Przywróć pozycję i wymiary ze skanu">↺ Jak w skanie</button>' : ''}
           <button class="danger" data-act="del">🗑 Usuń</button>
@@ -1718,14 +1788,23 @@ export class Editor {
     } else {
       const rooms = this.project.rooms.length;
       const furn = this.project.rooms.reduce((n, r) => n + r.furniture.length, 0);
+      const unv = this.project.rooms.reduce((n, r) => n + r.furniture.filter((f) => !f.verified && !f.hidden).length, 0);
       html = `
         <h2>${esc(this.project.name)}</h2>
-        <p class="note">${rooms} pok. · ${furn} mebli · ${this.conflicts.size ? `<span style="color:var(--danger)">${this.conflicts.size} z problemami</span>` : 'brak kolizji'}</p>
-        <h3>Jak używać</h3>
-        <p class="note"><b>Meble</b>: kliknij i przeciągaj. Kolor czerwony oznacza kolizję, pomarańczowy strefę drzwi. Przerywany obrys pokazuje pozycję ze skanu.</p>
-        <p class="note"><b>Ściany</b>: popraw błędy skanu (narożniki, długości ścian, drzwi, okna).</p>
-        <p class="note"><b>Pokoje</b>: ułóż kilka zeskanowanych pokoi w całe mieszkanie.</p>
-        <p class="note">Skróty: <kbd>R</kbd> obrót, <kbd>Del</kbd> usuń, <kbd>H</kbd> ukryj, <kbd>Ctrl+D</kbd> duplikuj, <kbd>Ctrl+Z</kbd> cofnij, <kbd>V</kbd> widok 3D/z góry, <kbd>M</kbd> miarka, strzałki = 1 cm (Shift = 10 cm), dwuklik = wyśrodkuj.</p>`;
+        <div class="sub">${rooms} pok. · ${furn} mebli · wersja: ${esc(activeVariant(this.project).name)}</div>
+        <div class="status ${this.conflicts.size ? 'bad' : 'ok'}">${this.conflicts.size ? `⚠ ${this.conflicts.size} mebli z kolizją — lista w zakładce „Pokoje”` : '✓ Brak kolizji'}</div>
+        <div class="card welcome">
+          <b>Co dalej?</b>
+          <ol>
+            ${rooms ? '' : '<li><b>🥽 Skanuj</b> pokój goglami (albo ＋ Dodaj → Pusty pokój).</li>'}
+            ${unv ? `<li>Potwierdź typy mebli: <b>„Co to jest?”</b> u góry po lewej (${unv}).</li>` : ''}
+            <li>Kliknij mebel na widoku albo na liście, żeby go edytować; przeciągnij, żeby przesunąć.</li>
+            <li>Popraw skan w trybie <b>🧱 Ściany</b> i sprawdź zakładkę <b>✔ Kontrola</b>.</li>
+            <li>Przemebluj w nowej <b>wersji</b> (zakładka 🔀 Wersje) — także w goglach: <b>🥽 W mieszkaniu</b> albo <b>🥽 VR</b>.</li>
+            <li>Dodaj zdjęcia i wyeksportuj <b>💾 Plik → Paczka dla AI</b>.</li>
+          </ol>
+          <button data-act="help">❓ Pomoc i skróty klawiszowe</button>
+        </div>`;
     }
     this.el.props.innerHTML = `<div class="props">${html}</div>`;
   }
@@ -1809,6 +1888,16 @@ export class Editor {
   }
 
   onPropClick(e) {
+    const sum = e.target.closest('details > summary');
+    if (sum) {
+      const d = sum.parentElement;
+      this.propOpen = this.propOpen || {};
+      this.propOpen[d.dataset.sec] = !d.open; // stan po kliknięciu
+      return;
+    }
+    const sw = e.target.closest('[data-color]');
+    if (sw) { const s0 = this.selected(); if (s0 && s0.f) { s0.f.color = sw.dataset.color; this.lastPropsKey = null; this.commit(); } return; }
+    if (e.target.closest('[data-act="help"]')) { document.getElementById('help').hidden = false; return; }
     const ph = e.target.closest('[data-photo]');
     if (ph) { this.showPhoto(ph.dataset.photo); return; }
     const rm = e.target.closest('[data-rmphoto]');

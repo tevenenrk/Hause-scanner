@@ -96,3 +96,6 @@ export const TEMPLATES = [
   { key: 'box', name: 'Prostopadłościan', type: 'other', shape: 'box', w: 0.6, d: 0.6, h: 0.6 },
   { key: 'cyl', name: 'Walec', type: 'other', shape: 'cylinder', w: 0.5, d: 0.5, h: 0.6 },
 ];
+
+/** Paleta kolorów mebli (PC i gogle). */
+export const PALETTE = ['#c8915a', '#8d6e52', '#f2efe9', '#3a3f47', '#6c8ebf', '#9b7fc4', '#5fa35f', '#d9534f', '#e8c547', '#9aa0a6', '#b9a28a', '#2f6fde'];

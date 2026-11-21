@@ -19,6 +19,10 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - po zapisie **dopytuje**, co to za przedmiot („Co to jest? Stół / Kanapa / …”), i pozwala oznaczyć mebel jako tymczasowy albo usunąć go. Już na tym etapie możesz **scalić bryły** („Scal z inną bryłą”), jeśli skaner podzielił jeden mebel na kilka.
 
 **Edytor (PC lub przeglądarka Questa)**
+- Pasek narzędzi ma grupy: tryb (🛋 Meble / 🧱 Ściany / 🗺 Pokoje / 📏 Miarka), widok (🧊 3D / 📐 Plan / 🏠 Makieta), **＋ Dodaj** (meble i bryły, drzwi, okno, pusty pokój, zdjęcia), cofnij/ponów, 👁 Pokaż, 💾 Plik i gogle (Skanuj / W mieszkaniu / VR).
+- Lewy panel ma zakładki **Pokoje / Wersje / Zdjęcia / Kontrola** z licznikami. Nad nimi pojawia się karta „Co to jest?”, gdy są meble do potwierdzenia.
+- Panel mebla ma zwijane sekcje: Podstawowe, Wymiary i położenie, Wygląd (próbki kolorów), Zdjęcia i link, Notatki. Akcje są na dole.
+- **❓ Pomoc** (albo klawisz `?`) pokazuje instrukcję i skróty klawiszowe.
 - przesuwanie mebli myszą (przyciąganie do ścian), obrót, zmiana wymiarów, kształty: prostopadłościan, L (narożnik) i walec,
 - **scalanie brył jako suma** (jak sumowanie boolowskie): scalone bryły tworzą jeden mebel o złożonym kształcie. Każda bryła zachowuje swój kształt i wysokość, całość przesuwa się i obraca razem, a kolizje liczone są dla każdej bryły osobno. „✂ Rozdziel bryły” cofa scalenie. Scalasz przez „⧉ Scal z…” albo Shift/Ctrl + klik,
 - **wersje układu**: alternatywne przemeblowania tego samego mieszkania („+ Nowa wersja” kopiuje bieżący układ). Przełączasz je listą po lewej albo w goglach,

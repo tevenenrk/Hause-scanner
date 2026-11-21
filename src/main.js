@@ -83,10 +83,12 @@ async function showHome() {
   $('project-list').innerHTML = list.length
     ? list.map((p) => `
       <li>
-        <span class="pname" data-open="${esc(p.id)}">${esc(p.name)}</span>
-        <span class="meta">${p.rooms} pok. · ${p.furniture} mebli · ${new Date(p.updatedAt).toLocaleString('pl-PL')}</span>
-        <button data-open="${esc(p.id)}" class="primary">Otwórz</button>
-        <button data-del="${esc(p.id)}" class="danger" title="Usuń projekt">Usuń</button>
+        <span class="pname" data-open="${esc(p.id)}">🏠 ${esc(p.name)}</span>
+        <span class="meta">${p.rooms} pok. · ${p.furniture} mebli · zmieniono ${new Date(p.updatedAt).toLocaleString('pl-PL')}</span>
+        <div class="acts">
+          <button data-open="${esc(p.id)}" class="primary">Otwórz</button>
+          <button data-del="${esc(p.id)}" class="danger ghost" title="Usuń projekt">Usuń</button>
+        </div>
       </li>`).join('')
     : '<li class="hint">Brak projektów. Utwórz nowy albo otwórz demo.</li>';
 }

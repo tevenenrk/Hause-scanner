@@ -18,7 +18,7 @@ import {
   ensureVariants, activeVariant, switchVariant, createVariant, deleteVariant, addMedia, createCamera,
 } from '../model.js';
 import { computeClearances } from '../geometry.js';
-import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, typeName, typeColor } from '../labels.js';
+import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, PALETTE, typeName, typeColor } from '../labels.js';
 
 // 'unbounded' = chodzenie po całym mieszkaniu bez granicy Guardian (przeglądarka Questa obsługuje ją
 // eksperymentalnie). Gdy niedostępna — 'local-floor', a na końcu 'local'. Nic nie jest wymagane,
@@ -38,7 +38,6 @@ export async function isVRSupported() {
   }
 }
 
-const PALETTE = ['#c8915a', '#8d6e52', '#f2efe9', '#3a3f47', '#6c8ebf', '#9b7fc4', '#5fa35f', '#d9534f', '#e8c547', '#9aa0a6', '#b9a28a', '#2f6fde'];
 
 export async function isARSupported() {
   try {
@@ -604,26 +603,6 @@ export class XRApp {
         rows: [[{ id: 'back', label: 'Anuluj', style: 'muted' }]],
       };
     }
-    if (st === 'look') {
-      const l = this.lookFor();
-      const on = (c) => (c ? 'active' : undefined);
-      return {
-        title: `Wygląd ${this.dollhouse || this.walking ? 'makiety' : 'w pokoju (MR)'}`,
-        lines: ['Ściany i meble: pełne, półprzezroczyste albo tylko krawędzie. Pojedynczy mebel zmienisz w jego panelu (Wygląd).'],
-        rows: [
-          [{ id: 'lookWall:off', label: 'Ściany: wył.', style: on(l.wallStyle === 'off') }, { id: 'lookWall:edges', label: 'Krawędzie', style: on(l.wallStyle === 'edges') }, { id: 'lookWall:transparent', label: 'Półprzezr.', style: on(l.wallStyle === 'transparent') }, { id: 'lookWall:solid', label: 'Pełne', style: on(l.wallStyle === 'solid') }],
-          [0.1, 0.25, 0.5, 0.75].map((v) => ({ id: `lookWallOp:${v}`, label: `Krycie ścian ${Math.round(v * 100)}%`, style: on(l.wallStyle === 'transparent' && Math.abs(l.wallOpacity - v) < 0.01) })),
-          [{ id: 'lookFurn:solid', label: 'Meble: bryły', style: on(l.furnStyle === 'solid') }, { id: 'lookFurn:edges', label: 'Meble: krawędzie', style: on(l.furnStyle === 'edges') }],
-          [1, 0.7, 0.4, 0.2].map((v) => ({ id: `lookFurnOp:${v}`, label: `Krycie mebli ${Math.round(v * 100)}%`, style: on(l.furnStyle === 'solid' && Math.abs(l.furnOpacity - v) < 0.01) })),
-          ...(!this.isVR ? [
-            [{ id: 'liveMesh:0', label: 'Trójkąty skanu: wył.', style: on(!this.showMesh) }, { id: 'liveMesh:0.2', label: 'słabe', style: on(this.showMesh && this.liveStyle().mesh <= 0.25) }, { id: 'liveMesh:0.45', label: 'wyraźne', style: on(this.showMesh && this.liveStyle().mesh > 0.25) }],
-            [{ id: 'liveFurn', label: this.liveStyle().furniture ? 'Żółte bryły skanu: wł.' : 'Żółte bryły skanu: wył.', style: on(this.liveStyle().furniture) }, { id: 'livePlanes', label: this.liveStyle().planes ? 'Płaszczyzny skanu: wł.' : 'Płaszczyzny skanu: wył.', style: on(this.liveStyle().planes) }],
-          ] : []),
-          ...(this.walking ? [[{ id: 'floorAdj:-5', label: 'Podłoga niżej 5 cm' }, { id: 'floorAdj:5', label: 'Podłoga wyżej 5 cm' }]] : []),
-          [{ id: 'lookFloor', label: l.floor ? 'Podłoga: wł.' : 'Podłoga: wył.', style: on(l.floor) }, { id: 'back', label: '← Wróć', style: 'primary' }],
-        ],
-      };
-    }
     if (st === 'measure') {
       const m = this.measures || [];
       const last = m.length >= 2 && m.length % 2 === 0 ? this.measureText(m[m.length - 2], m[m.length - 1]) : null;
@@ -663,13 +642,6 @@ export class XRApp {
       for (let i = 0; i < PALETTE.length; i += 6) rows.push(PALETTE.slice(i, i + 6).map((c) => ({ id: `setColor:${c}`, label: '', color: c, selected: c.toLowerCase() === String(found.f.color).toLowerCase() })));
       rows.push([{ id: 'setColor:type', label: 'Kolor typu mebla', color: typeColor(found.f.type) }, { id: 'back', label: '← Wróć', style: 'muted' }]);
       return { title: `Kolor: ${found.f.name}`, lines: ['Wybierz kolor — zaznaczony ma białą ramkę.'], rows };
-    }
-    if (st === 'variants') {
-      const vs = ensureVariants(this.project);
-      const rows = vs.map((v) => [{ id: `varSwitch:${v.id}`, label: (v.id === this.project.activeVariantId ? '● ' : '') + v.name, style: v.id === this.project.activeVariantId ? 'active' : undefined }]);
-      rows.push([{ id: 'varNew', label: '+ Nowa wersja (kopia)', style: 'primary' }, { id: 'varDel', label: 'Usuń bieżącą', style: 'danger', disabled: vs.length <= 1 }]);
-      rows.push([{ id: 'back', label: '← Wróć', style: 'muted' }]);
-      return { title: 'Wersje układu', lines: ['Każda wersja to osobne ustawienie mebli w tym samym mieszkaniu. Nowa wersja = kopia bieżącej, potem ją przemeblowujesz.'], rows };
     }
     if (st === 'hidden') {
       const hidden = [];

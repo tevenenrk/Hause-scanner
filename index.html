@@ -18,13 +18,14 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#/" title="Lista projektów">⌂ Hause Scanner</a>
+    <a class="brand" href="#/" title="Lista projektów"><span class="logo">⌂</span> Hause Scanner</a>
     <div id="topbar-project" class="topbar-project" hidden>
-      <input id="project-name" class="project-name" aria-label="Nazwa projektu">
+      <input id="project-name" class="project-name" aria-label="Nazwa projektu" title="Kliknij, aby zmienić nazwę projektu">
       <span id="save-status" class="save-status"></span>
     </div>
     <div class="topbar-right">
       <span id="xr-status" class="xr-status"></span>
+      <button id="btn-help" class="ghost" title="Pomoc i skróty klawiszowe (?)">❓ Pomoc</button>
     </div>
   </header>
 
@@ -32,91 +33,99 @@
   <main id="home" class="home" hidden>
     <section class="hero">
       <h1>Makieta mieszkania z Meta Quest</h1>
-      <p>Zeskanuj pokój goglami (Space Setup), popraw błędy skanu, a potem przesuwaj meble i sprawdzaj, czy się zmieszczą: w edytorze 3D albo w mieszanej rzeczywistości, w skali 1:1.</p>
+      <p>Zeskanuj mieszkanie goglami, popraw błędy skanu i przemebluj je: na komputerze, w makiecie albo chodząc po prawdziwym mieszkaniu w goglach, w skali 1:1.</p>
       <div class="hero-actions">
-        <button id="btn-new" class="primary">+ Nowy projekt</button>
-        <button id="btn-demo">Otwórz projekt demo</button>
-        <label class="button">Importuj plik…<input id="file-import" type="file" accept=".json,application/json" hidden></label>
+        <button id="btn-new" class="primary big">＋ Nowy projekt</button>
+        <button id="btn-demo" class="big">Otwórz projekt demo</button>
+        <label class="button big">⤒ Importuj plik…<input id="file-import" type="file" accept=".json,application/json" hidden></label>
       </div>
       <p id="xr-hint" class="hint"></p>
+    </section>
+    <section class="steps">
+      <div class="step"><span class="num">1</span><b>Skan w goglach</b><p>W Queście: Ustawienia → Środowisko fizyczne → Konfiguracja przestrzeni. Potem w projekcie „🥽 Skanuj” — aplikacja sprawdzi, czy skan jest kompletny.</p></div>
+      <div class="step"><span class="num">2</span><b>Popraw i nazwij</b><p>„Co to jest?” — potwierdź typy mebli, scal rozbite bryły, popraw ściany i drzwi. Strzałka pokaże, o który mebel chodzi.</p></div>
+      <div class="step"><span class="num">3</span><b>Przemebluj</b><p>Twórz wersje układu i przesuwaj meble na PC, w makiecie VR albo w prawdziwym mieszkaniu (MR). Kolizje i odległości od ścian widać od razu.</p></div>
+      <div class="step"><span class="num">4</span><b>Zdjęcia i AI</b><p>Rób zdjęcia goglami lub dodawaj je na PC, a „Plik → Paczka dla AI” przygotuje wszystko do dokładnej wizualizacji.</p></div>
     </section>
     <section>
       <h2>Projekty na tym urządzeniu</h2>
       <ul id="project-list" class="project-list"></ul>
-      <p class="hint">Projekty są zapisywane w przeglądarce tego urządzenia. Aby przenieść projekt między Questem a komputerem, użyj <b>Eksport → plik JSON</b> i zaimportuj go po drugiej stronie.</p>
+      <p class="hint">Projekty zapisują się w przeglądarce tego urządzenia. Aby przenieść projekt między Questem a komputerem: „Plik → Eksport projektu” i „Importuj plik” po drugiej stronie.</p>
     </section>
   </main>
 
   <!-- ===== Edytor ===== -->
   <main id="editor" class="editor" hidden>
     <nav class="toolbar" id="toolbar">
-      <div class="tb-group" role="group" aria-label="Tryb">
-        <button data-mode="furniture" class="tb-toggle" title="Przesuwanie i edycja mebli (1)">Meble</button>
-        <button data-mode="walls" class="tb-toggle" title="Korekta ścian, drzwi i okien (2)">Ściany</button>
-        <button data-mode="rooms" class="tb-toggle" title="Układanie pokoi w mieszkanie (3)">Pokoje</button>
-        <button data-mode="measure" class="tb-toggle" title="Miarka: kliknij dwa punkty (M)">📏 Miarka</button>
+      <div class="seg" role="group" aria-label="Tryb pracy">
+        <button data-mode="furniture" title="Meble: zaznaczanie, przesuwanie, wymiary (1)"><span class="ic">🛋</span><span class="lbl">Meble</span></button>
+        <button data-mode="walls" title="Ściany: narożniki, długości, drzwi i okna (2)"><span class="ic">🧱</span><span class="lbl">Ściany</span></button>
+        <button data-mode="rooms" title="Pokoje: układanie pokoi w mieszkanie (3)"><span class="ic">🗺</span><span class="lbl">Pokoje</span></button>
+        <button data-mode="measure" title="Miarka: kliknij dwa punkty (M)"><span class="ic">📏</span><span class="lbl">Miarka</span></button>
       </div>
-      <div class="tb-group" role="group" aria-label="Widok">
-        <button data-view="3d" class="tb-toggle" title="Widok 3D (V)">3D</button>
-        <button data-view="top" class="tb-toggle" title="Widok z góry (V)">Z góry</button>
-        <button data-view="model" class="tb-toggle" title="Makieta: pełne ściany, bez etykiet, obrót myszą (sam się obraca, dopóki nie dotkniesz)">🏠 Makieta</button>
+      <div class="seg" role="group" aria-label="Widok">
+        <button data-view="3d" title="Widok 3D (V)"><span class="ic">🧊</span><span class="lbl">3D</span></button>
+        <button data-view="top" title="Plan z góry (V)"><span class="ic">📐</span><span class="lbl">Plan</span></button>
+        <button data-view="model" title="Makieta: pełne ściany, bez etykiet, sama się obraca"><span class="ic">🏠</span><span class="lbl">Makieta</span></button>
       </div>
-      <div class="tb-group">
-        <div class="dropdown">
-          <button id="btn-add" title="Dodaj mebel">+ Mebel ▾</button>
-          <div class="menu" id="menu-add"></div>
-        </div>
-        <button id="btn-add-door" title="Dodaj drzwi na zaznaczonej ścianie">+ Drzwi</button>
-        <button id="btn-add-window" title="Dodaj okno na zaznaczonej ścianie">+ Okno</button>
-        <button id="btn-add-room" title="Dodaj pusty pokój (np. do ręcznego narysowania)">+ Pokój</button>
+      <div class="dropdown">
+        <button id="btn-add" class="primary" title="Dodaj mebel, bryłę, drzwi, okno, pokój albo zdjęcie">＋ Dodaj ▾</button>
+        <div class="menu menu-wide" id="menu-add"></div>
       </div>
-      <div class="tb-group">
-        <button id="btn-undo" title="Cofnij (Ctrl+Z)">↶</button>
-        <button id="btn-redo" title="Ponów (Ctrl+Y)">↷</button>
+      <div class="seg">
+        <button id="btn-undo" title="Cofnij (Ctrl+Z)"><span class="ic">↶</span></button>
+        <button id="btn-redo" title="Ponów (Ctrl+Y)"><span class="ic">↷</span></button>
       </div>
-      <div class="tb-group">
-        <div class="dropdown">
-          <button id="btn-show">Pokaż ▾</button>
-          <div class="menu" id="menu-show">
-            <label><input type="checkbox" data-opt="showMesh"> Siatka ze skanu</label>
-            <label><input type="checkbox" data-opt="showGhosts" checked> Pierwotne pozycje mebli</label>
-            <label><input type="checkbox" data-opt="showLabels" checked> Etykiety</label>
-            <label><input type="checkbox" data-opt="showZones" checked> Strefy otwierania drzwi</label>
-            <label><input type="checkbox" data-opt="snap" checked> Przyciąganie do ścian</label>
-            <hr>
-            <span class="menu-title">Ściany</span>
-            <label><input type="radio" name="wallMode" value="full"> pełne</label>
-            <label><input type="radio" name="wallMode" value="low" checked> obniżone</label>
-            <label><input type="radio" name="wallMode" value="hidden"> ukryte</label>
-          </div>
-        </div>
-        <div class="dropdown">
-          <button id="btn-export">Plik ▾</button>
-          <div class="menu" id="menu-export">
-            <button id="btn-export-json">Eksport: projekt (JSON)</button>
-            <button id="btn-export-json-light">Eksport: JSON bez siatki skanu</button>
-            <button id="btn-export-glb">Eksport: model 3D (GLB)</button>
-            <button id="btn-export-ai">Eksport: paczka dla AI (ZIP: zdjęcia, kamery, rzuty, opis)</button>
-            <label class="button">Import JSON (zastąp projekt)…<input id="file-import-editor" type="file" accept=".json,application/json" hidden></label>
-          </div>
+      <div class="dropdown">
+        <button id="btn-show" title="Co pokazywać na widoku">👁 <span class="lbl">Pokaż</span> ▾</button>
+        <div class="menu" id="menu-show">
+          <span class="menu-title">Na widoku</span>
+          <label><input type="checkbox" data-opt="showLabels" checked> Etykiety mebli</label>
+          <label><input type="checkbox" data-opt="showGhosts" checked> Pierwotne pozycje (przerywany obrys)</label>
+          <label><input type="checkbox" data-opt="showZones" checked> Strefy otwierania drzwi</label>
+          <label><input type="checkbox" data-opt="showMesh"> Siatka trójkątów ze skanu</label>
+          <hr>
+          <span class="menu-title">Ściany</span>
+          <label><input type="radio" name="wallMode" value="full"> pełne</label>
+          <label><input type="radio" name="wallMode" value="low" checked> obniżone (lepiej widać meble)</label>
+          <label><input type="radio" name="wallMode" value="hidden"> ukryte</label>
+          <hr>
+          <span class="menu-title">Edycja</span>
+          <label><input type="checkbox" data-opt="snap" checked> Przyciąganie do ścian</label>
         </div>
       </div>
-      <div class="tb-group tb-xr">
-        <button id="btn-scan" class="xr-btn" title="Odczytaj pokój ze Space Setup i dodaj go do projektu">🥽 Skanuj pokój</button>
-        <button id="btn-mr" class="xr-btn" title="Przesuwaj meble w mieszanej rzeczywistości (w swoim mieszkaniu)">🥽 Edytuj w MR</button>
-        <button id="btn-vr" class="xr-btn" title="Gotowy model w VR: makieta i spacer po mieszkaniu 1:1 (nie trzeba być w mieszkaniu)">🥽 Makieta VR</button>
+      <div class="dropdown">
+        <button id="btn-export" title="Eksport i import">💾 <span class="lbl">Plik</span> ▾</button>
+        <div class="menu" id="menu-export">
+          <span class="menu-title">Eksport</span>
+          <button id="btn-export-ai"><b>🤖 Paczka dla AI (ZIP)</b><small>zdjęcia, kamery, rzuty, opis, model 3D</small></button>
+          <button id="btn-export-json"><b>Projekt (JSON)</b><small>do przeniesienia na Questa / inny komputer</small></button>
+          <button id="btn-export-json-light"><b>Projekt bez siatki skanu</b><small>mniejszy plik</small></button>
+          <button id="btn-export-glb"><b>Model 3D (GLB)</b><small>Blender, przeglądarki 3D</small></button>
+          <hr>
+          <span class="menu-title">Import</span>
+          <label class="button">Dołącz pokoje z pliku JSON…<input id="file-import-editor" type="file" accept=".json,application/json" hidden></label>
+        </div>
+      </div>
+      <div class="seg tb-xr" role="group" aria-label="Gogle">
+        <button id="btn-scan" class="xr-btn" title="Skanuj pokój (Space Setup) i dodaj go do projektu"><span class="ic">🥽</span><span class="lbl">Skanuj</span></button>
+        <button id="btn-mr" class="xr-btn" title="W mieszkaniu (MR): model na prawdziwych pokojach, makieta lub spacer"><span class="ic">🥽</span><span class="lbl">W mieszkaniu</span></button>
+        <button id="btn-vr" class="xr-btn" title="VR: makieta i spacer po gotowym modelu, bez bycia w mieszkaniu"><span class="ic">🥽</span><span class="lbl">VR</span></button>
       </div>
     </nav>
 
     <aside class="sidebar left" id="sidebar-left">
       <div id="verify-card" class="card verify" hidden></div>
-      <div id="check-card" class="card check"></div>
-      <div id="variants" class="card variants"></div>
-      <div id="cameras" class="card cameras"></div>
+      <div class="side-tabs" id="side-tabs" role="tablist"></div>
+      <div class="pane" data-pane="rooms">
+        <div id="room-list"></div>
+        <div id="issues"></div>
+      </div>
+      <div class="pane" data-pane="variants" hidden><div id="variants" class="variants"></div></div>
+      <div class="pane" data-pane="photos" hidden><div id="cameras" class="cameras"></div></div>
+      <div class="pane" data-pane="check" hidden><div id="check-card" class="check"></div></div>
       <input id="file-photo" type="file" accept="image/*" multiple hidden>
       <input id="file-campic" type="file" accept="image/*" hidden>
-      <div id="room-list"></div>
-      <div id="issues"></div>
     </aside>
 
     <div class="viewport" id="viewport">
@@ -135,6 +144,50 @@
       <div id="props"></div>
     </aside>
   </main>
+
+  <div id="help" class="modal" hidden>
+    <div class="modal-box">
+      <button class="modal-close" data-close title="Zamknij (Esc)">✕</button>
+      <h2>Pomoc</h2>
+      <div class="help-grid">
+        <section>
+          <h3>Na komputerze</h3>
+          <ul>
+            <li><b>🛋 Meble</b>: kliknij mebel, przeciągnij, aby przesunąć. Shift/Ctrl + klik zaznacza kilka (np. do scalenia). Kolor czerwony = kolizja, pomarańczowy = strefa drzwi.</li>
+            <li><b>🧱 Ściany</b>: przeciągaj narożniki, kliknij ścianę, aby zmienić długość lub ją przesunąć; drzwi i okna przeciągaj wzdłuż ściany.</li>
+            <li><b>🗺 Pokoje</b>: ułóż pokoje w mieszkanie albo połącz drzwi dwóch pokoi.</li>
+            <li><b>📷 Zdjęcia</b>: „＋ Dodaj → Zdjęcie pomieszczenia” i dopasuj widok do zdjęcia; zdjęcia mebli dodasz w panelu mebla.</li>
+            <li><b>Wersje</b>: każda wersja to osobne przemeblowanie (lewy panel → Wersje).</li>
+          </ul>
+        </section>
+        <section>
+          <h3>W goglach</h3>
+          <ul>
+            <li><b>🥽 Skanuj</b>: użyj skanu z gogli albo zeskanuj od nowa; kontrola pokaże dziury w skanie.</li>
+            <li><b>🥽 W mieszkaniu</b>: ekran startowy — wersja i tryb (w mieszkaniu / makieta / spacer).</li>
+            <li>Chwyć mebel spustem; gałka przód/tył = dalej/bliżej, w bok = obrót. Grip przywołuje panel, chwyta makietę.</li>
+            <li>Zakładki: Tryb, Meble, Ściany, Widok, Narzędzia (zdjęcia, miarka, kontrola), Wersje.</li>
+          </ul>
+        </section>
+        <section>
+          <h3>Skróty klawiszowe</h3>
+          <table class="keys">
+            <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></td><td>Meble / Ściany / Pokoje</td></tr>
+            <tr><td><kbd>M</kbd></td><td>Miarka</td></tr>
+            <tr><td><kbd>V</kbd></td><td>3D ↔ plan</td></tr>
+            <tr><td><kbd>R</kbd> / <kbd>Shift</kbd>+<kbd>R</kbd></td><td>Obrót o 15°</td></tr>
+            <tr><td>strzałki</td><td>Przesuń o 1 cm (Shift: 10 cm)</td></tr>
+            <tr><td><kbd>Del</kbd></td><td>Usuń</td></tr>
+            <tr><td><kbd>H</kbd></td><td>Ukryj / pokaż</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Duplikuj</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd></td><td>Cofnij / ponów</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>Odznacz / anuluj</td></tr>
+            <tr><td>dwuklik</td><td>Wyśrodkuj widok</td></tr>
+          </table>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast" hidden></div>
   <div id="lightbox" class="lightbox" hidden><img alt=""><span class="hint">Kliknij, aby zamknąć</span></div>
