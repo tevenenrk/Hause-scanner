@@ -260,3 +260,18 @@ test('attachToWall: mebel wiszący przykleja się tyłem do ściany', async () =
   assert.equal(attachToWall(room, far), null);
   assert.equal(mountOf(createFurniture({ type: 'table' })), 'floor');
 });
+
+test('dywan (płaski mebel) nie koliduje z meblami ani drzwiami', () => {
+  const room = {
+    outline: [[-2, -2], [2, -2], [2, 2], [-2, 2]],
+    openings: [],
+    furniture: [
+      { id: 'rug', name: 'Dywan', type: 'rug', shape: 'box', x: 0, z: 0, y: 0, rot: 0, w: 2, d: 1.5, h: 0.01 },
+      { id: 'sofa', name: 'Kanapa', type: 'couch', shape: 'box', x: 0, z: 0.3, y: 0, rot: 0, w: 1.8, d: 0.9, h: 0.8 },
+      { id: 'table', name: 'Stół', type: 'table', shape: 'box', x: 0.2, z: -0.25, y: 0, rot: 0, w: 0.8, d: 0.5, h: 0.45 },
+    ],
+  };
+  const c = computeConflicts(room);
+  assert.ok(!c.has('rug'));
+  assert.deepEqual(c.get('sofa').map((x) => x.otherId), ['table']);
+});

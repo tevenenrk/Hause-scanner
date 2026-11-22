@@ -59,6 +59,7 @@ export function createFurniture(props = {}) {
   }
   if (props.display) f.display = props.display;
   if (props.fromScan) f.fromScan = true;
+  if (props.fromModel) f.fromModel = true;
   if (f.shape === 'compound') {
     f.parts = (props.parts || []).map((p) => ({ ...p }));
     if (!f.parts.length) f.shape = 'box';
@@ -358,9 +359,14 @@ function fromBase64(b64, Ctor) {
 
 /** Projekt -> obiekt gotowy do JSON.stringify (siatki jako base64). */
 export function projectToJSON(project, { includeMesh = true } = {}) {
+  const models = {};
+  if (includeMesh && project.models) {
+    for (const [id, m] of Object.entries(project.models)) models[id] = { ...m, data: toBase64(ArrayBuffer.isView(m.data) ? m.data : new Uint8Array(m.data)) };
+  }
   return {
     format: 'hause-scanner',
     ...project,
+    models,
     rooms: project.rooms.map((r) => {
       const scan = { ...r.scan };
       if (scan.mesh && includeMesh) {
@@ -387,6 +393,10 @@ export function projectFromJSON(obj) {
     }
     return room;
   });
+  if (obj.models) {
+    p.models = {};
+    for (const [id, m] of Object.entries(obj.models)) if (typeof m.data === 'string') p.models[id] = { ...m, data: fromBase64(m.data, Uint8Array).buffer };
+  }
   p.version = MODEL_VERSION;
   return p;
 }
@@ -394,7 +404,7 @@ export function projectFromJSON(obj) {
 // ---------- historia (cofnij / ponów) ----------
 // Migawki bez siatek skanu (są duże i nie zmieniają się podczas edycji).
 function snapshot(project) {
-  return JSON.stringify(project, (k, v) => (k === 'mesh' || k === 'media' ? undefined : v));
+  return JSON.stringify(project, (k, v) => (k === 'mesh' || k === 'media' || k === 'models' ? undefined : v));
 }
 
 export class History {
@@ -430,6 +440,7 @@ export class History {
     const meshes = new Map(project.rooms.map((r) => [r.id, r.scan && r.scan.mesh]));
     for (const r of restored.rooms) if (meshes.get(r.id)) r.scan.mesh = meshes.get(r.id);
     restored.media = project.media || {}; // zdjęcia nie są cofane (duże dane)
+    if (project.models) restored.models = project.models; // poprawiony model GLB też nie
     return restored;
   }
 }

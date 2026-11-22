@@ -405,6 +405,8 @@ export function computeConflicts(room, { tolerance = 0.005 } = {}) {
   const res = new Map();
   const push = (id, item) => { if (!res.has(id)) res.set(id, []); res.get(id).push(item); };
   const items = room.furniture.filter((f) => !f.hidden);
+  // płaskie rzeczy na podłodze (dywan) nie kolidują z meblami ani z drzwiami
+  const flat = (f) => f.type === 'rug' || ((f.y || 0) < 0.01 && f.h < 0.04);
   const fps = new Map(items.map((f) => [f.id, furnitureFootprints(f, tolerance)]));
   const outline = room.outline;
   const zones = (room.openings || []).map((op) => ({ op, zone: doorZone(outline, op) })).filter((z) => z.zone);
@@ -426,7 +428,7 @@ export function computeConflicts(room, { tolerance = 0.005 } = {}) {
     }
     if (wall) push(f.id, { kind: 'wall', label: 'ściana' });
     // drzwi
-    if ((f.y || 0) < 1.9) {
+    if ((f.y || 0) < 1.9 && !flat(f)) {
       for (const { op, zone } of zones) {
         if (footprintsIntersect(parts, [zone])) push(f.id, { kind: 'door', otherId: op.id, label: 'strefa otwierania drzwi' });
       }
@@ -436,7 +438,7 @@ export function computeConflicts(room, { tolerance = 0.005 } = {}) {
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j];
-      if (!yOverlap(a, b)) continue;
+      if (flat(a) || flat(b) || !yOverlap(a, b)) continue;
       const sa = furnitureSolids(a, tolerance), sb = furnitureSolids(b, tolerance);
       const hit = sa.some((x) => sb.some((y) => Math.min(x.y1, y.y1) - Math.max(x.y0, y.y0) > 0.01 && footprintsIntersect(x.polys, y.polys)));
       if (hit) {

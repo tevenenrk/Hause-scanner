@@ -17,6 +17,7 @@ import { FURNITURE_TYPES, TYPE_KEYS, TEMPLATES, PALETTE, typeName, typeColor } f
 import { saveProject } from './store.js';
 import { applyScanShape, applyBoxShape } from './scanShape.js';
 import { checkRoom, verdictText } from './scanCheck.js';
+import { loadRefModel, hasRefModel, refSettings, addRefModelData, removeRefModel, bindPiece } from './refModel.js';
 
 const cm = (m) => Math.round(m * 1000) / 10; // metry -> cm z dokładnością 1 mm
 const fmtCm = (m) => `${Math.round(m * 100)} cm`;
@@ -157,6 +158,7 @@ export class Editor {
       if (!this.running) return;
       requestAnimationFrame(loop);
       this.activeControls.update();
+      if (this.view3d.refRoot) this.view3d.updateCutaway(this.camera.position);
       this.renderer.render(this.scene, this.camera);
       this.labelRenderer.render(this.scene, this.camera);
     };
@@ -240,6 +242,7 @@ export class Editor {
     this.updateXRButtons();
     if (!this.running) { this.running = true; this.loop(); }
     this.el.saveStatus.textContent = 'Zapisano';
+    this.ensureRefModel();
     this.checkResults = null;
     clearTimeout(this.checkTimer);
     this.checkTimer = setTimeout(() => this.runCheck(), 400);
@@ -325,8 +328,70 @@ export class Editor {
 
   // ======================= zmiany modelu =======================
   /** Pełne odświeżenie po zmianie (przebudowa sceny, paneli). */
+  /** Wczytuje poprawiony model (GLB) projektu, jeśli jest i nie jest jeszcze wczytany. */
+  async ensureRefModel() {
+    const p = this.project;
+    if (!hasRefModel(p)) { this.refModel = null; return null; }
+    const id = p.refModel.modelId;
+    if (this.refModel && this.refModel.modelId === id) return this.refModel;
+    if (this.refLoading && this.refLoading.id === id) return this.refLoading.promise;
+    const promise = loadRefModel(p).then((rm) => {
+      if (this.project !== p && !(this.project && this.project.refModel && this.project.refModel.modelId === id)) return null;
+      this.refModel = rm;
+      this.refLoading = null;
+      this.refresh();
+      return rm;
+    }).catch((e) => {
+      this.refLoading = null;
+      console.error(e);
+      this.toast('Nie udało się wczytać poprawionego modelu: ' + e.message, true);
+      return null;
+    });
+    this.refLoading = { id, promise };
+    return promise;
+  }
+
+  /** Co pokazać: poprawiony model czy bryły (ściany i pokoje edytuje się na bryłach). */
+  refShow() {
+    if (!this.refModel || !hasRefModel(this.project)) return null;
+    if (this.mode === 'walls' || this.mode === 'rooms' || this.matchCam) return 'boxes';
+    return refSettings(this.project).show;
+  }
+
+  async importRefModel(file) {
+    try {
+      const buf = await file.arrayBuffer();
+      const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 4));
+      if (magic !== 'glTF') throw new Error('to nie jest plik .glb (binarny glTF)');
+      const p = this.project;
+      if (p.refModel && p.refModel.modelId) {
+        if (!confirm('Projekt ma już poprawiony model. Zastąpić go nowym plikiem?')) return;
+      }
+      this.toast('Wczytywanie modelu…');
+      const keep = p.refModel ? { offset: p.refModel.offset, show: p.refModel.show, mr: p.refModel.mr, model: p.refModel.model } : {};
+      addRefModelData(p, buf, file.name);
+      Object.assign(p.refModel, Object.fromEntries(Object.entries(keep).filter(([, v]) => v)));
+      this.refModel = null;
+      const rm = await loadRefModel(p);
+      const st = refSettings(p);
+      rm.setOffset(st.offset);
+      const r = rm.autoBind(p, st);
+      this.refModel = rm;
+      this.selection = null;
+      this.commit();
+      await this.flushSave();
+      this.toast(`Wczytano „${file.name}”: ${rm.pieceList.length} mebli w modelu — ${r.matched} połączono z bryłami${r.created ? `, ${r.created} dostało nowe bryły` : ''}. Przesuwaj je jak zwykłe meble.`);
+    } catch (e) {
+      console.error(e);
+      this.toast('Nie udało się wczytać modelu: ' + e.message, true);
+    }
+  }
+
   refresh() {
     this.computeAllConflicts();
+    const refShow = this.refShow();
+    const refSt = refShow ? refSettings(this.project) : null;
+    this.view3d.setOptions({ refModel: this.refModel, refShow, refSettings: refSt, refLook: refSt ? refSt.model : null });
     this.view3d.setOptions({ ...this.viewOpts, selection: this.selection, selectedId: this.selection && this.selection.kind === 'furniture' ? this.selection.id : null, selectedIds: this.extra, conflicts: this.conflicts, mode: this.mode, cameras: this.project.cameras || [], hiddenCameraId: this.matchCam ? this.matchCam.id : null });
     this.view3d.rebuild(this.project);
     this.updateOverlay();
@@ -1195,6 +1260,7 @@ export class Editor {
     $('btn-export-json-light').addEventListener('click', () => this.exportJSON(false));
     $('btn-export-glb').addEventListener('click', () => this.exportGLB());
     $('file-import-editor').addEventListener('change', (e) => { if (e.target.files[0]) this.importRoomsFromFile(e.target.files[0]); e.target.value = ''; });
+    $('file-refmodel').addEventListener('change', (e) => { if (e.target.files[0]) this.importRefModel(e.target.files[0]); e.target.value = ''; });
     $('btn-scan').addEventListener('click', () => this.onStartXR && this.onStartXR('scan', this));
     $('btn-mr').addEventListener('click', () => this.onStartXR && this.onStartXR('edit', this));
     $('btn-vr').addEventListener('click', () => this.onStartXR && this.onStartXR('vr', this));
@@ -1704,6 +1770,15 @@ export class Editor {
           <div class="row"><span>Na makiecie</span><label><input type="checkbox" data-k="hidden" ${f.hidden ? 'checked' : ''}> ukryty (np. tymczasowy)</label></div>
         </div></details>
 
+        ${this.refModel && hasRefModel(this.project) ? (() => {
+          const cur = this.refModel.pieceOf(f.id);
+          const opts = this.refModel.pieceNames().map((pc) => `<option value="${esc(pc.key)}" ${pc.key === cur ? 'selected' : ''}>${esc(pc.name)}${pc.key.endsWith('#1') ? '' : ' ' + pc.key.split('#')[1]}</option>`).join('');
+          return `<details ${open('ref', true)} data-sec="ref"><summary>✨ Poprawiony model</summary><div class="body">
+          <div class="row"><span>Mebel z modelu</span><select data-k="refPiece"><option value="">— brak —</option>${opts}</select></div>
+          <div class="note">Realistyczny mebel z modelu jedzie razem z tą bryłą. Zmień parę, jeśli dopasowało się źle (mebel z modelu stanie tam, gdzie teraz jest bryła).</div>
+        </div></details>`;
+        })() : ''}
+
         <details ${open('photos', photos.length > 0 || !!f.link)} data-sec="photos"><summary>📷 Zdjęcia i link (${photos.length})</summary><div class="body">
           <div class="photos">${photos.map((id) => `<div class="ph"><img src="${this.project.media[id].data}" data-photo="${id}" alt=""><button data-rmphoto="${id}" title="Usuń zdjęcie">×</button></div>`).join('') || '<span class="note">Dodaj zdjęcie, żeby było wiadomo, jaki to mebel — także mebel, którego jeszcze nie ma w mieszkaniu.</span>'}</div>
           <div class="btns"><button data-act="addPhoto">📷 ＋ Dodaj zdjęcie</button></div>
@@ -1814,15 +1889,60 @@ export class Editor {
             <li>Dodaj zdjęcia i wyeksportuj <b>💾 Plik → Paczka dla AI</b>.</li>
           </ol>
           <button data-act="help">❓ Pomoc i skróty klawiszowe</button>
-        </div>`;
+        </div>
+        ${this.refModelCard()}`;
     }
     this.el.props.innerHTML = `<div class="props">${html}</div>`;
   }
 
+  refModelCard() {
+    const p = this.project;
+    if (!hasRefModel(p)) {
+      return `<div class="card"><b>✨ Poprawiony model (GLB)</b>
+        <p class="note">Masz już dokładny, teksturowany model zrobiony z „Paczki dla AI”? Wczytaj go — zobaczysz go na makiecie, na spacerze i w goglach nałożony na prawdziwy pokój. Meble z modelu przesuwasz jak bryły.</p>
+        <label class="button">📂 Wczytaj model .glb…<input type="file" accept=".glb,model/gltf-binary" data-reffile hidden></label></div>`;
+    }
+    const st = refSettings(p);
+    const m = p.models[st.modelId];
+    const rm = this.refModel;
+    const bound = rm ? rm.pieceList.filter((pc) => st.bind[pc.key]).length : 0;
+    const o = st.offset;
+    const sel = (v, n) => `<option value="${v}" ${st.show === v ? 'selected' : ''}>${n}</option>`;
+    return `<div class="card"><b>✨ Poprawiony model</b>
+      <div class="sub">${esc(m.name)} · ${(m.size / 1048576).toFixed(1)} MB${rm ? ` · ${rm.pieceList.length} mebli, ${bound} połączonych z bryłami` : ' · wczytywanie…'}</div>
+      <div class="row"><span>Pokazuj</span><select data-k="refShow">${sel('model', 'model (bryły niewidoczne)')}${sel('both', 'model + krawędzie brył')}${sel('boxes', 'tylko bryły')}</select></div>
+      <div class="note">W trybach „Ściany” i „Pokoje” zawsze widać bryły. Kliknij mebel z modelu, żeby go przesunąć.</div>
+      <details data-sec="refOffset" ${this.propOpen && this.propOpen.refOffset ? 'open' : ''}><summary>Przesunięcie modelu</summary><div class="body">
+        <div class="row3"><label>X [cm]<input type="number" data-k="refX" value="${cm(o.x)}" step="1"></label><label>Z [cm]<input type="number" data-k="refZ" value="${cm(o.z)}" step="1"></label><label>Obrót [°]<input type="number" data-k="refRot" value="${Math.round(deg(o.rot) * 10) / 10}" step="0.5"></label></div>
+        <div class="row"><span>Wysokość [cm]</span><input type="number" data-k="refY" value="${cm(o.y)}" step="1"></div>
+        <div class="note">Model z paczki AI leży zwykle dokładnie na projekcie (0). Zmieniaj tylko, gdy jest przesunięty.</div>
+      </div></details>
+      <div class="btns">
+        <button data-act="refRebind" title="Dopasuj meble z modelu do brył od nowa">↻ Połącz meble od nowa</button>
+        <label class="button">📂 Inny plik…<input type="file" accept=".glb,model/gltf-binary" data-reffile hidden></label>
+        <button class="danger" data-act="refRemove">Usuń model</button>
+      </div></div>`;
+  }
+
+  onRefChange(k, v) {
+    const st = refSettings(this.project);
+    const n = parseFloat(String(v).replace(',', '.'));
+    if (k === 'refShow') st.show = v;
+    else if (!isFinite(n)) return;
+    else if (k === 'refX') st.offset.x = n / 100;
+    else if (k === 'refZ') st.offset.z = n / 100;
+    else if (k === 'refY') st.offset.y = n / 100;
+    else if (k === 'refRot') st.offset.rot = (n * Math.PI) / 180;
+    this.lastPropsKey = null;
+    this.commit();
+  }
+
   onPropChange(e) {
     const t = e.target;
+    if (t.matches('[data-reffile]')) { if (t.files[0]) this.importRefModel(t.files[0]); t.value = ''; return; }
     const k = t.dataset.k;
     if (!k) return;
+    if (/^ref(Show|X|Z|Y|Rot)$/.test(k)) { this.onRefChange(k, t.value); return; }
     const s = this.selection;
     const sel = this.selected();
     if (!sel) return;
@@ -1833,6 +1953,12 @@ export class Editor {
       if (k === 'camName') cam.name = String(v).trim() || cam.name;
       if (k === 'camFov') { const n = parseFloat(v); if (isFinite(n)) cam.fov = Math.min(120, Math.max(15, n)); }
       if (k === 'camNotes') cam.notes = v;
+      this.lastPropsKey = null;
+      this.commit();
+      return;
+    }
+    if (s.kind === 'furniture' && k === 'refPiece') {
+      if (this.refModel) bindPiece(this.project, this.refModel, t.value, sel.f.id);
       this.lastPropsKey = null;
       this.commit();
       return;
@@ -1920,6 +2046,23 @@ export class Editor {
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const act = b.dataset.act;
+    if (act === 'refRebind' && this.refModel) {
+      const st = refSettings(this.project);
+      this.refModel.setOffset(st.offset);
+      const r = this.refModel.autoBind(this.project, st);
+      this.lastPropsKey = null;
+      this.commit();
+      this.toast(`Połączono ${r.matched} mebli z bryłami${r.created ? `, ${r.created} nowych brył` : ''}.`);
+      return;
+    }
+    if (act === 'refRemove') {
+      if (!confirm('Usunąć poprawiony model z projektu? Bryły zostają.')) return;
+      removeRefModel(this.project);
+      this.refModel = null;
+      this.lastPropsKey = null;
+      this.commit();
+      return;
+    }
     const s = this.selection;
     const sel = this.selected();
     if (!sel) return;

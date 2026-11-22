@@ -63,6 +63,7 @@ export class ApartmentView {
       glass: new THREE.MeshStandardMaterial({ color: 0x8fc8ff, transparent: true, opacity: 0.35, roughness: 0.1 }),
       zone: new THREE.MeshBasicMaterial({ color: COLOR_WARN, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }),
       mesh: new THREE.MeshBasicMaterial({ color: 0x5577aa, wireframe: true, transparent: true, opacity: 0.22, depthWrite: false }),
+      hiddenPick: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false, side: THREE.DoubleSide }),
       outline: new THREE.LineBasicMaterial({ color: 0x00e0ff }),
       outlineSel: new THREE.LineBasicMaterial({ color: COLOR_SELECTED }),
       ghost: new THREE.LineDashedMaterial({ color: 0x777777, dashSize: 0.08, gapSize: 0.05 }),
@@ -73,6 +74,8 @@ export class ApartmentView {
   setOptions(o) { Object.assign(this.options, o); }
 
   dispose() {
+    // poprawiony model (GLB) ma własne zasoby współdzielone z pamięcią podręczną — nie zwalniamy ich tutaj
+    if (this.refRoot && this.refRoot.parent) this.refRoot.parent.remove(this.refRoot);
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       if (o.material && o.userData.ownMaterial) o.material.dispose();
@@ -81,11 +84,19 @@ export class ApartmentView {
     this.group.clear();
   }
 
+  /** Czy pokazujemy poprawiony model (GLB) zamiast brył. */
+  get refActive() {
+    return !!(this.options.refModel && this.options.refShow && this.options.refShow !== 'boxes');
+  }
+
   rebuild(project) {
     this.dispose();
+    this.project = project;
     this.roomGroups.clear();
     this.furnitureObjects.clear();
     this.pickables = [];
+    const rm = this.refActive ? this.options.refModel : null;
+    this.refRoot = rm ? rm.root : null;
     for (const room of project.rooms) {
       const g = this.buildRoom(room);
       this.group.add(g);
@@ -94,7 +105,36 @@ export class ApartmentView {
     if (this.options.showCameras && Array.isArray(this.options.cameras)) {
       for (const cam of this.options.cameras) if (cam.id !== this.options.hiddenCameraId) this.group.add(this.buildCamera(cam));
     }
+    if (rm) {
+      const st = this.options.refSettings || {};
+      rm.setOffset(st.offset);
+      rm.setLook(this.options.refLook || {});
+      rm.sync(project, st);
+      this.group.add(rm.root);
+      // klik w realistyczny mebel zaznacza jego bryłę
+      for (const p of rm.pieceList) {
+        const b = rm.binding[p.key];
+        const hit = b && rm.byFid.get(b.fid) === p ? this.furnitureObjects.get(b.fid) : null;
+        p.obj.traverse((o) => {
+          if (!o.isMesh) return;
+          if (hit && p.obj.visible) {
+            Object.assign(o.userData, { kind: 'furniture', id: b.fid, roomId: hit.userData.roomId });
+            this.pickables.push(o);
+          } else if (o.userData.kind === 'furniture') {
+            delete o.userData.kind;
+          }
+        });
+      }
+      rm.updateCutaway(this.lastEye || null);
+    }
     this.applyHighlights();
+  }
+
+  /** Przekrój poprawionego modelu względem oka (pozycja w układzie świata). */
+  updateCutaway(eyeWorld) {
+    if (!this.refRoot || !this.refRoot.parent) return;
+    this.lastEye = this.group.worldToLocal(eyeWorld.clone());
+    this.options.refModel.updateCutaway(this.lastEye);
   }
 
   buildRoom(room) {
@@ -113,9 +153,10 @@ export class ApartmentView {
     const shape = new THREE.Shape(outline.map(([x, z]) => new THREE.Vector2(x, -z)));
     const floorGeo = new THREE.ShapeGeometry(shape);
     floorGeo.rotateX(-Math.PI / 2);
-    if (look ? look.floor : !isMR) {
+    const ref = this.refActive;
+    if (ref || (look ? look.floor : !isMR)) {
       const roomSelected = sel && sel.kind === 'room' && sel.roomId === room.id;
-      const floor = new THREE.Mesh(floorGeo, roomSelected ? this.materials.floorSel : this.materials.floor);
+      const floor = new THREE.Mesh(floorGeo, ref ? this.materials.hiddenPick : roomSelected ? this.materials.floorSel : this.materials.floor);
       floor.receiveShadow = true;
       floor.userData = { kind: 'floor', roomId: room.id };
       floor.name = 'floor';
@@ -139,17 +180,17 @@ export class ApartmentView {
     }
 
     // ściany i otwory
-    const drawWalls = look ? look.wallStyle !== 'off' : (!isMR && this.options.wallMode !== 'hidden');
+    const drawWalls = !ref && (look ? look.wallStyle !== 'off' : (!isMR && this.options.wallMode !== 'hidden'));
     if (drawWalls) {
       const wallH = this.options.wallMode === 'low' ? Math.min(1.0, room.height) : room.height;
       this.wallLook = look ? this.makeWallLook(look) : null;
       for (let i = 0; i < outline.length; i++) this.buildWall(g, room, i, wallH);
     }
     const clipH = !isMR && this.options.wallMode === 'low' ? Math.min(1.0, room.height) : Infinity;
-    for (const op of room.openings || []) this.buildOpeningMarks(g, room, op, isMR, clipH);
+    if (!ref) for (const op of room.openings || []) this.buildOpeningMarks(g, room, op, isMR, clipH);
 
     // strefy drzwi
-    if (!isMR && this.options.showZones) {
+    if (!isMR && !ref && this.options.showZones) {
       for (const op of room.openings || []) {
         const zone = doorZone(outline, op);
         if (!zone) continue;
@@ -169,7 +210,7 @@ export class ApartmentView {
       const obj = this.buildFurniture(f, room);
       g.add(obj);
       this.furnitureObjects.set(f.id, obj);
-      if (!isMR && this.options.showGhosts && f.scanned) {
+      if (!isMR && !ref && this.options.showGhosts && f.scanned) {
         const ghost = this.buildGhost(f);
         if (ghost) g.add(ghost);
       }
@@ -344,15 +385,18 @@ export class ApartmentView {
     const parts = f.shape === 'compound' && Array.isArray(f.parts) && f.parts.length ? f.parts : [{ ...f, x: 0, z: 0, y: 0, rot: 0 }];
     // wygląd: globalny (look) + własny mebla (f.display: 'transparent' | 'edges')
     const look = this.options.look;
-    const style = f.display === 'edges' || (look && look.furnStyle === 'edges' && f.display !== 'transparent') ? 'edges' : 'solid';
+    // z poprawionym modelem bryła jest niewidoczna (model: tylko zaznaczenie) albo ma same krawędzie (model + bryły)
+    const refMode = this.refActive ? this.options.refShow : null;
+    const style = refMode || f.display === 'edges' || (look && look.furnStyle === 'edges' && f.display !== 'transparent') ? 'edges' : 'solid';
     let opacity = look ? look.furnOpacity : isMR ? 0.45 : 1;
     if (f.display === 'transparent') opacity = Math.min(opacity, 0.3);
     if (style === 'edges') opacity = 0;
     const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(f.color), roughness: 0.75, transparent: opacity < 1, opacity, depthWrite: opacity >= 1, colorWrite: opacity > 0 });
     const edgeBase = style === 'edges' ? new THREE.Color(f.color).offsetHSL(0, 0, 0.15).getHex() : 0x222222;
-    const edgeMat = new THREE.LineBasicMaterial({ color: edgeBase, transparent: true, opacity: style === 'edges' || isMR ? 0.95 : 0.5 });
+    const edgeMat = new THREE.LineBasicMaterial({ color: edgeBase, transparent: true, opacity: refMode === 'model' ? 0 : style === 'edges' || isMR ? 0.95 : 0.5, depthTest: !refMode });
     obj.userData.edgeBase = edgeBase;
     obj.userData.edgeOpacity = edgeMat.opacity;
+    obj.userData.hardOpacity = refMode === 'model' ? 0.9 : edgeMat.opacity;
     obj.userData.meshes = [];
     obj.userData.edgeMat = edgeMat;
     obj.userData.mat = mat;
@@ -361,8 +405,8 @@ export class ApartmentView {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(p.x || 0, p.y || 0, p.z || 0);
       mesh.rotation.y = p.rot || 0;
-      mesh.castShadow = !isMR;
-      mesh.receiveShadow = !isMR;
+      mesh.castShadow = !isMR && !refMode;
+      mesh.receiveShadow = !isMR && !refMode;
       mesh.userData = { kind: 'furniture', id: f.id, roomId: room.id, ownMaterial: i === 0 };
       obj.add(mesh);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), edgeMat);
@@ -402,6 +446,10 @@ export class ApartmentView {
     if (!obj) return;
     obj.position.set(f.x, f.y || 0, f.z);
     obj.rotation.y = f.rot || 0;
+    if (this.refRoot && this.refRoot.parent && this.project) {
+      const room = this.project.rooms.find((r) => r.id === obj.userData.roomId);
+      if (room) this.options.refModel.updateFor(room, f);
+    }
   }
 
   applyHighlights() {
@@ -415,7 +463,7 @@ export class ApartmentView {
       mat.emissiveIntensity = hard || warn ? 0.55 : 0;
       const sel = id === selectedId || !!(this.options.selectedIds && this.options.selectedIds.has(id));
       edgeMat.color.setHex(sel ? COLOR_SELECTED : hard ? COLOR_CONFLICT : obj.userData.edgeBase);
-      edgeMat.opacity = sel ? 1 : obj.userData.edgeOpacity;
+      edgeMat.opacity = sel ? 1 : hard ? obj.userData.hardOpacity : obj.userData.edgeOpacity;
       if (obj.userData.label) obj.userData.label.element.classList.toggle('conflict', hard);
       if (obj.userData.label) obj.userData.label.element.classList.toggle('selected', sel);
     }

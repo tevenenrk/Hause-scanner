@@ -52,6 +52,8 @@ Cel końcowy: **cały skan mieszkania → czysta makieta 3D z teksturami i rucho
 - [ ] Tekstury: kafelkowalne tekstury podłóg/ścian (generowane lub z biblioteki PBR), kolor/tekstura mebli na podstawie zdjęć.
 - [ ] Opcjonalnie: dokładniejsze modele wybranych mebli (fotogrametria / Gaussian splatting z telefonu) wstawiane w miejsce bryłek.
 - [ ] Eksport makiety z teksturami (GLB).
+- [x] Import poprawionego, teksturowanego modelu z AI (GLB z paczki): makieta, spacer, MR 1:1. Meble z modelu są podpięte pod bryły, więc dają się przesuwać, mają wersje i kolizje.
+- [ ] Ściany, okna i drzwi z modelu AI jako źródło poprawek obrysu (dziś model jest tylko nakładką, obrys edytuje się na bryłach).
 
 ## Etap 5 — AI w trakcie skanu (wersja natywna lub gdy przeglądarka udostępni kamerę)
 - [ ] Klatka z kamery → model wizyjny → automatyczna propozycja typu mebla i pytanie tylko przy niepewności.

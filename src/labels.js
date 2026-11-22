@@ -16,6 +16,7 @@ export const FURNITURE_TYPES = {
   fridge:   { name: 'Lodówka',         color: '#d9dde3', size: [0.6, 0.65, 1.85] },
   washer:   { name: 'Pralka',          color: '#cfd6de', size: [0.6, 0.6, 0.85] },
   kitchen:  { name: 'Zabudowa kuchenna', color: '#b9a28a', size: [2.4, 0.6, 0.9] },
+  rug:      { name: 'Dywan',           color: '#c9b79c', size: [2.0, 1.4, 0.01] },
   other:    { name: 'Inny przedmiot',  color: '#9aa0a6', size: [0.6, 0.6, 0.6] },
 };
 

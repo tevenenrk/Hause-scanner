@@ -9,6 +9,7 @@ import { applyScanShape, applyBoxShape } from '../scanShape.js';
 import { checkRoom, verdictText } from '../scanCheck.js';
 import { PhotoCapture, fovYFromProj } from './photoCapture.js';
 import { ApartmentView } from '../roomView.js';
+import { loadRefModel, hasRefModel, refSettings } from '../refModel.js';
 import {
   computeConflicts, snapToWalls, normalizeAngle, rad, polygonCentroid, alignRotationToNearestWall, worldToRoom, roomToWorld,
   polygonArea, roomContainsWorldPoint, localToWorld, mountOf, attachToWall, moveEdge, edgeOf,
@@ -162,6 +163,11 @@ export class XRApp {
     scene.add(this.root);
     this.view = new ApartmentView({ mode: 'mr', cssLabels: false });
     this.root.add(this.view.group);
+    this.refModel = null;
+    if (hasRefModel(this.project)) {
+      loadRefModel(this.project).then((rm) => { if (this.ended) return; this.refModel = rm; this.refresh(); })
+        .catch((e) => { console.error(e); this.message = 'Nie udało się wczytać poprawionego modelu: ' + e.message; this.updatePanel(); });
+    }
     this.labels = new THREE.Group();
     this.root.add(this.labels);
     this.holesGroup = new THREE.Group(); // czerwone kafelki: niezeskanowane miejsca
@@ -334,6 +340,7 @@ export class XRApp {
     this.updateGrab(dt);
     this.updateGuide(now / 1000);
     this.updateRays();
+    if (this.view.refRoot && this.head) this.view.updateCutaway(new THREE.Vector3().setFromMatrixPosition(this.head));
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -498,6 +505,11 @@ export class XRApp {
       lookFurn: () => { this.lookFor().furnStyle = arg; this.saveLook(); },
       lookFurnOp: () => { const l = this.lookFor(); l.furnOpacity = parseFloat(arg); l.furnStyle = 'solid'; this.saveLook(); },
       lookFloor: () => { const l = this.lookFor(); l.floor = !l.floor; this.saveLook(); },
+      refShow: () => { refSettings(this.project).show = arg; this.saveLook(); },
+      refToggle: () => { const st = refSettings(this.project); st.show = st.show === 'boxes' ? 'model' : 'boxes'; this.saveLook(); },
+      refWalls: () => { const l = this.refLookFor(); if (arg === 'transparent' && l.walls === 'transparent') l.wallOpacity = l.wallOpacity >= 0.5 ? 0.15 : l.wallOpacity >= 0.3 ? 0.6 : 0.3; l.walls = arg; this.saveLook(); },
+      refFloor: () => { const l = this.refLookFor(); l.floor = !l.floor; this.saveLook(); },
+      refCeil: () => { const l = this.refLookFor(); l.ceiling = !l.ceiling; this.saveLook(); },
       display: () => { const s = this.sel(); if (s) { s.f.display = arg === 'normal' ? undefined : arg; this.commit(); } },
       measure: () => { this.state = 'measure'; this.selectedId = null; this.refresh(); },
       measureClear: () => { this.measures = []; this.refresh(); },
@@ -752,12 +764,15 @@ export class XRApp {
       [{ id: 'start:doll', label: '🧱 Makieta — miniatura do przestawiania mebli', style: this.isVR ? 'primary' : undefined }],
       [{ id: 'start:walk', label: '🚶 Spacer wirtualny — chodzę po modelu jak w grze' }],
     ];
+    const ref = hasRefModel(this.project);
+    const refOn = ref && refSettings(this.project).show !== 'boxes';
     return {
       title: 'Co chcesz zrobić?',
       lines: [`Projekt: ${this.project.name}. Wybierz wersję układu mebli (każda wersja to osobne przemeblowanie), a potem tryb.`],
       rows: [
         ...this.variantRows(3),
         [{ id: 'varNew', label: '+ Nowa wersja (kopia zaznaczonej)' }],
+        ...(ref ? [[{ id: 'refShow:model', label: `✨ Poprawiony model${this.refModel ? '' : ' (wczytywanie…)'}`, style: refOn ? 'tabActive' : 'tab' }, { id: 'refShow:boxes', label: '▢ Bryły', style: refOn ? 'tab' : 'tabActive' }]] : []),
         ...modes,
       ],
     };
@@ -822,10 +837,22 @@ export class XRApp {
     } else if (tab === 'view') {
       const l = this.lookFor();
       title = `Widok ${this.dollhouse || this.walking || this.isVR ? 'makiety' : 'w pokoju'}`;
-      rows.push([{ id: 'lookWall:off', label: 'Ściany: wył.', style: on(l.wallStyle === 'off') }, { id: 'lookWall:edges', label: 'Krawędzie', style: on(l.wallStyle === 'edges') }, { id: 'lookWall:transparent', label: 'Półprzezr.', style: on(l.wallStyle === 'transparent') }, { id: 'lookWall:solid', label: 'Pełne', style: on(l.wallStyle === 'solid') }]);
-      rows.push([0.1, 0.25, 0.5, 0.75].map((v) => ({ id: `lookWallOp:${v}`, label: `Ściany ${Math.round(v * 100)}%`, style: on(l.wallStyle === 'transparent' && Math.abs(l.wallOpacity - v) < 0.01) })));
-      rows.push([{ id: 'lookFurn:solid', label: 'Meble: bryły', style: on(l.furnStyle === 'solid') }, { id: 'lookFurn:edges', label: 'Meble: krawędzie', style: on(l.furnStyle === 'edges') }, { id: 'lookFloor', label: l.floor ? 'Podłoga: wł.' : 'Podłoga: wył.', style: on(l.floor) }]);
-      rows.push([1, 0.7, 0.4, 0.2].map((v) => ({ id: `lookFurnOp:${v}`, label: `Meble ${Math.round(v * 100)}%`, style: on(l.furnStyle === 'solid' && Math.abs(l.furnOpacity - v) < 0.01) })));
+      const boxLook = () => {
+        rows.push([{ id: 'lookWall:off', label: 'Ściany: wył.', style: on(l.wallStyle === 'off') }, { id: 'lookWall:edges', label: 'Krawędzie', style: on(l.wallStyle === 'edges') }, { id: 'lookWall:transparent', label: 'Półprzezr.', style: on(l.wallStyle === 'transparent') }, { id: 'lookWall:solid', label: 'Pełne', style: on(l.wallStyle === 'solid') }]);
+        rows.push([0.1, 0.25, 0.5, 0.75].map((v) => ({ id: `lookWallOp:${v}`, label: `Ściany ${Math.round(v * 100)}%`, style: on(l.wallStyle === 'transparent' && Math.abs(l.wallOpacity - v) < 0.01) })));
+        rows.push([{ id: 'lookFurn:solid', label: 'Meble: bryły', style: on(l.furnStyle === 'solid') }, { id: 'lookFurn:edges', label: 'Meble: krawędzie', style: on(l.furnStyle === 'edges') }, { id: 'lookFloor', label: l.floor ? 'Podłoga: wł.' : 'Podłoga: wył.', style: on(l.floor) }]);
+        rows.push([1, 0.7, 0.4, 0.2].map((v) => ({ id: `lookFurnOp:${v}`, label: `Meble ${Math.round(v * 100)}%`, style: on(l.furnStyle === 'solid' && Math.abs(l.furnOpacity - v) < 0.01) })));
+      };
+      if (!hasRefModel(this.project)) boxLook();
+      else {
+        const st = refSettings(this.project), rl = this.refLookFor();
+        rows.push([{ id: 'refShow:model', label: '✨ Model', style: on(st.show === 'model') }, { id: 'refShow:both', label: 'Model + bryły', style: on(st.show === 'both') }, { id: 'refShow:boxes', label: 'Same bryły', style: on(st.show === 'boxes') }]);
+        if (st.show === 'boxes') boxLook();
+        else {
+          rows.push([{ id: 'refWalls:solid', label: 'Ściany modelu: pełne', style: on(rl.walls === 'solid') }, { id: 'refWalls:transparent', label: `Półprzezr.${rl.walls === 'transparent' ? ` ${Math.round(rl.wallOpacity * 100)}%` : ''}`, style: on(rl.walls === 'transparent') }, { id: 'refWalls:off', label: 'Ukryte', style: on(rl.walls === 'off') }]);
+          rows.push([{ id: 'refFloor', label: `Podłoga modelu: ${rl.floor ? 'wł.' : 'wył.'}`, style: on(rl.floor) }, { id: 'refCeil', label: `Sufit i lampa: ${rl.ceiling ? 'wł.' : 'wył.'}`, style: on(rl.ceiling) }]);
+        }
+      }
       if (!this.isVR) {
         rows.push([{ id: 'liveMesh:0', label: 'Trójkąty skanu: wył.', style: on(!this.showMesh) }, { id: 'liveMesh:0.2', label: 'słabe', style: on(this.showMesh && this.liveStyle().mesh <= 0.25) }, { id: 'liveMesh:0.45', label: 'wyraźne', style: on(this.showMesh && this.liveStyle().mesh > 0.25) }]);
         rows.push([{ id: 'liveFurn', label: `Żółte bryły skanu: ${this.liveStyle().furniture ? 'wł.' : 'wył.'}`, style: on(this.liveStyle().furniture) }, { id: 'livePlanes', label: `Płaszczyzny skanu: ${this.liveStyle().planes ? 'wł.' : 'wył.'}`, style: on(this.liveStyle().planes) }]);
@@ -1155,7 +1182,7 @@ export class XRApp {
       this.checkRoomRef = room;
       this.showHoles(room, this.checkRes);
       this.setRootMatrix(new THREE.Matrix4().fromArray(m));
-      this.view.setOptions({ showMesh: false, conflicts: new Map(), selectedId: null });
+      this.view.setOptions({ showMesh: false, conflicts: new Map(), selectedId: null, refModel: null });
       this.view.rebuild({ rooms: [room] });
     } catch (e) {
       console.error(e);
@@ -1688,6 +1715,12 @@ export class XRApp {
     if (!v.mr) v.mr = { wallStyle: 'transparent', wallOpacity: 0.25, furnStyle: 'solid', furnOpacity: 1, floor: false };
     if (!v.model) v.model = { wallStyle: 'solid', wallOpacity: 0.5, furnStyle: 'solid', furnOpacity: 1, floor: true };
     return this.dollhouse || this.walking || this.isVR ? v.model : v.mr;
+  }
+
+  /** Wygląd poprawionego modelu: osobno w pokoju (MR) i na makiecie / spacerze. */
+  refLookFor() {
+    const st = refSettings(this.project);
+    return this.dollhouse || this.walking || this.isVR ? st.model : st.mr;
   }
 
   liveStyle() {
@@ -2276,7 +2309,10 @@ export class XRApp {
     // zapisana siatka nie jest potrzebna w MR — trójkąty pokazuje podgląd na żywo (LiveSceneOverlay)
     let look = this.lookFor();
     if (this.tab === 'walls' && this.state === 'edit' && look.wallStyle === 'off') look = { ...look, wallStyle: 'edges' }; // ściany muszą dać się wskazać
+    const ref = this.refModel && hasRefModel(this.project);
+    const refShow = !ref ? null : this.tab === 'walls' && this.state === 'edit' ? 'boxes' : refSettings(this.project).show;
     this.view.setOptions({
+      refModel: ref ? this.refModel : null, refShow, refSettings: ref ? refSettings(this.project) : null, refLook: ref ? this.refLookFor() : null,
       showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look, cameras: this.visibleCameras(), cameraSize: this.dollhouse ? 0.45 : 0.15,
       selection: this.selOpening ? { kind: 'opening', roomId: this.selOpening.roomId, id: this.selOpening.id } : this.selWall ? { kind: 'edge', roomId: this.selWall.roomId, index: this.selWall.index } : null,
     });

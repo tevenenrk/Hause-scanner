@@ -67,6 +67,14 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - **📷 + Zdjęcie pomieszczenia** tworzy na makiecie **kamerę** (różowy ostrosłup). W trybie „Dopasuj widok do zdjęcia” zdjęcie leży półprzezroczyście na makiecie, a Ty ustawiasz widok i kąt widzenia, aż bryły pokryją się ze zdjęciem. Pozycja kamery jest zapisywana,
 - **Plik → Eksport: paczka dla AI (ZIP)**: `README_dla_AI.md` (polecenie i opis), `scena.json`, plan z góry, widok 3D, każde zdjęcie pomieszczenia razem z **renderem makiety z tej samej pozycji kamery**, zdjęcia mebli, `model.glb`, projekt. Paczkę wrzucasz do AI (np. Claude), żeby zrobiła dokładniejszą makietę albo wizualizację, wiedząc, gdzie co stoi i jak wygląda.
 
+**✨ Poprawiony model z AI (GLB)**
+- model zrobiony przez AI z paczki (np. teksturowany `pokoj_2_model.glb`) wczytasz przez **Plik → Import: Poprawiony model (GLB)** albo kartę „✨ Poprawiony model” w panelu po prawej (gdy nic nie jest zaznaczone),
+- model musi leżeć w układzie z paczki (`scena.json`: metry, Y w górę, podłoga y = 0); jeśli jest przesunięty, popraw to polem „Przesunięcie modelu”,
+- meble z modelu (dzieci węzła `Meble`) same łączą się z bryłami projektu po położeniu i nazwie. Te, które nie mają pary (np. dywan, krzesełko), dostają nowe bryły. Bryła jest niewidoczna, a realistyczny mebel jedzie razem z nią, więc przesuwanie, wersje układu i kolizje działają tak jak dla brył. Parę zmienisz w panelu mebla („✨ Poprawiony model”),
+- widok: **model** / **model + krawędzie brył** / **same bryły**. Ściany od strony patrzącego i sufit chowają się same (przekrój jak w domku dla lalek). W trybach „Ściany” i „Pokoje” widać bryły,
+- w goglach model działa w **makiecie**, na **spacerze** (z sufitem i lampą) i **w mieszkaniu (MR 1:1)**: nakłada się na prawdziwy pokój tym samym wyrównaniem co bryły. W zakładce „Widok” ustawisz ściany modelu (pełne / półprzezroczyste / ukryte), podłogę oraz sufit; ustawienia są osobne dla MR i dla makiety/spaceru. Na ekranie startowym przełącznik „✨ Poprawiony model / ▢ Bryły”,
+- model jest zapisywany w projekcie i w pełnym eksporcie JSON, więc przenosi się na Questa razem z projektem (eksport „bez siatek” go pomija).
+
 **Gotowy model w VR (bez bycia w mieszkaniu)**
 - przycisk **🥽 Makieta VR** otwiera pełny VR z gotowym modelem: najpierw makieta przed Tobą,
 - **🚶 Spacer 1:1**: wybierasz pokój i chodzisz po wirtualnym mieszkaniu (lewa gałka: chodzenie, prawa: obrót o 30°),
@@ -114,6 +122,8 @@ Projekty są zapisywane w przeglądarce danego urządzenia. Aby edytować na kom
 1. Na Queście użyj **Plik → Eksport: projekt (JSON)**.
 2. Przenieś plik (kabel USB, chmura, e-mail).
 3. Na PC użyj **Importuj plik…** na ekranie startowym albo **Plik → Import JSON** w edytorze. Ta druga opcja dołącza pokoje do bieżącego projektu.
+
+Tak samo w drugą stronę. Pełny eksport JSON zawiera też poprawiony model (GLB). Plik GLB możesz też wczytać bezpośrednio w przeglądarce Questa: otwórz projekt, a potem **Plik → Poprawiony model (GLB)**.
 
 ## Test bez gogli (emulator)
 
