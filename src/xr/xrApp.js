@@ -70,6 +70,8 @@ function matrixFrom2D(p, y = 0) {
   return new THREE.Matrix4().makeRotationY(p.rot).setPosition(p.x, y, p.z);
 }
 
+const nextOpacity = (v) => (v < 0.3 ? 0.4 : v < 0.55 ? 0.7 : 0.15);
+
 export class XRApp {
   /**
    * @param {object} o
@@ -116,7 +118,7 @@ export class XRApp {
 
   async onSessionStarted(session) {
     this.session = session;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true }); // stencil: czerń za oknami poprawionego modelu
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setClearColor(0x000000, 0);
     renderer.xr.enabled = true;
@@ -507,9 +509,10 @@ export class XRApp {
       lookFloor: () => { const l = this.lookFor(); l.floor = !l.floor; this.saveLook(); },
       refShow: () => { refSettings(this.project).show = arg; this.saveLook(); },
       refToggle: () => { const st = refSettings(this.project); st.show = st.show === 'boxes' ? 'model' : 'boxes'; this.saveLook(); },
-      refWalls: () => { const l = this.refLookFor(); if (arg === 'transparent' && l.walls === 'transparent') l.wallOpacity = l.wallOpacity >= 0.5 ? 0.15 : l.wallOpacity >= 0.3 ? 0.6 : 0.3; l.walls = arg; this.saveLook(); },
-      refFloor: () => { const l = this.refLookFor(); l.floor = !l.floor; this.saveLook(); },
-      refCeil: () => { const l = this.refLookFor(); l.ceiling = !l.ceiling; this.saveLook(); },
+      // ponowne „Półprzezr.” zmienia stopień: 40% → 70% → 15% → 40%…
+      refRoom: () => { const l = this.refLookFor(); if (arg === 'transparent' && l.room === 'transparent') l.roomOpacity = nextOpacity(l.roomOpacity); l.room = arg; this.saveLook(); },
+      refFurn: () => { const l = this.refLookFor(); if (arg === 'transparent' && l.furn === 'transparent') l.furnOpacity = nextOpacity(l.furnOpacity); l.furn = arg; this.saveLook(); },
+      refCams: () => { const st = refSettings(this.project); st.cams = !st.cams; this.saveLook(); },
       display: () => { const s = this.sel(); if (s) { s.f.display = arg === 'normal' ? undefined : arg; this.commit(); } },
       measure: () => { this.state = 'measure'; this.selectedId = null; this.refresh(); },
       measureClear: () => { this.measures = []; this.refresh(); },
@@ -849,8 +852,11 @@ export class XRApp {
         rows.push([{ id: 'refShow:model', label: '✨ Model', style: on(st.show === 'model') }, { id: 'refShow:both', label: 'Model + bryły', style: on(st.show === 'both') }, { id: 'refShow:boxes', label: 'Same bryły', style: on(st.show === 'boxes') }]);
         if (st.show === 'boxes') boxLook();
         else {
-          rows.push([{ id: 'refWalls:solid', label: 'Ściany modelu: pełne', style: on(rl.walls === 'solid') }, { id: 'refWalls:transparent', label: `Półprzezr.${rl.walls === 'transparent' ? ` ${Math.round(rl.wallOpacity * 100)}%` : ''}`, style: on(rl.walls === 'transparent') }, { id: 'refWalls:off', label: 'Ukryte', style: on(rl.walls === 'off') }]);
-          rows.push([{ id: 'refFloor', label: `Podłoga modelu: ${rl.floor ? 'wł.' : 'wył.'}`, style: on(rl.floor) }, { id: 'refCeil', label: `Sufit i lampa: ${rl.ceiling ? 'wł.' : 'wył.'}`, style: on(rl.ceiling) }]);
+          const pct = (v) => ` ${Math.round(v * 100)}%`;
+          rows.push([{ id: 'refRoom:solid', label: 'Ściany, podłoga, sufit: pełne', style: on(rl.room === 'solid') }, { id: 'refRoom:transparent', label: `Półprzezr.${rl.room === 'transparent' ? pct(rl.roomOpacity) : ''}`, style: on(rl.room === 'transparent') }, { id: 'refRoom:off', label: 'Ukryte', style: on(rl.room === 'off') }]);
+          rows.push([{ id: 'refFurn:solid', label: 'Meble: pełne', style: on(rl.furn === 'solid') }, { id: 'refFurn:transparent', label: `Półprzezr.${rl.furn === 'transparent' ? pct(rl.furnOpacity) : ''}`, style: on(rl.furn === 'transparent') }, { id: 'refFurn:off', label: 'Ukryte', style: on(rl.furn === 'off') }]);
+          rows.push([{ id: 'refCams', label: `📷 Miejsca zdjęć: ${st.cams ? 'wł.' : 'wył.'}`, style: on(st.cams) }]);
+          if (!this.isVR) lines.push('Za oknami i drzwiami modelu jest czerń (gdy stoisz w środku). Żeby zobaczyć prawdziwy pokój, ustaw ściany na półprzezroczyste albo ukryte.');
         }
       }
       if (!this.isVR) {
@@ -2311,9 +2317,10 @@ export class XRApp {
     if (this.tab === 'walls' && this.state === 'edit' && look.wallStyle === 'off') look = { ...look, wallStyle: 'edges' }; // ściany muszą dać się wskazać
     const ref = this.refModel && hasRefModel(this.project);
     const refShow = !ref ? null : this.tab === 'walls' && this.state === 'edit' ? 'boxes' : refSettings(this.project).show;
+    const refOn = ref && refShow !== 'boxes';
     this.view.setOptions({
-      refModel: ref ? this.refModel : null, refShow, refSettings: ref ? refSettings(this.project) : null, refLook: ref ? this.refLookFor() : null,
-      showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look, cameras: this.visibleCameras(), cameraSize: this.dollhouse ? 0.45 : 0.15,
+      refModel: ref ? this.refModel : null, refShow, refSettings: ref ? refSettings(this.project) : null, refLook: ref ? this.refLookFor() : null, refBlackout: !this.isVR,
+      showMesh: false, conflicts: this.allConflicts(), selectedId: this.selectedId, look, cameras: refOn && !refSettings(this.project).cams ? [] : this.visibleCameras(), cameraSize: this.dollhouse ? 0.45 : 0.15,
       selection: this.selOpening ? { kind: 'opening', roomId: this.selOpening.roomId, id: this.selOpening.id } : this.selWall ? { kind: 'edge', roomId: this.selWall.roomId, index: this.selWall.index } : null,
     });
     this.view.rebuild(this.project);

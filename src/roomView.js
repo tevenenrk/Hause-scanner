@@ -108,6 +108,7 @@ export class ApartmentView {
     if (rm) {
       const st = this.options.refSettings || {};
       rm.setOffset(st.offset);
+      rm.blackout = !!this.options.refBlackout;
       rm.setLook(this.options.refLook || {});
       rm.sync(project, st);
       this.group.add(rm.root);
@@ -171,8 +172,8 @@ export class ApartmentView {
     pts.push(pts[0].clone());
     const ol = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), this.materials.outline);
     ol.userData.kind = 'outline';
-    if (isMR || this.options.mode === 'walls') g.add(ol); else ol.geometry.dispose();
-    if (isMR && !(look && look.wallStyle !== 'off')) {
+    if (!ref && (isMR || this.options.mode === 'walls')) g.add(ol); else ol.geometry.dispose();
+    if (isMR && !ref && !(look && look.wallStyle !== 'off')) {
       const top = pts.map((p) => new THREE.Vector3(p.x, room.height, p.z));
       const tl = new THREE.Line(new THREE.BufferGeometry().setFromPoints(top), new THREE.LineBasicMaterial({ color: 0x00e0ff, transparent: true, opacity: 0.35 }));
       tl.userData.ownMaterial = true;
@@ -396,7 +397,7 @@ export class ApartmentView {
     const edgeMat = new THREE.LineBasicMaterial({ color: edgeBase, transparent: true, opacity: refMode === 'model' ? 0 : style === 'edges' || isMR ? 0.95 : 0.5, depthTest: !refMode });
     obj.userData.edgeBase = edgeBase;
     obj.userData.edgeOpacity = edgeMat.opacity;
-    obj.userData.hardOpacity = refMode === 'model' ? 0.9 : edgeMat.opacity;
+    obj.userData.hardOpacity = edgeMat.opacity; // przy poprawionym modelu bez czerwonych konturów kolizji
     obj.userData.meshes = [];
     obj.userData.edgeMat = edgeMat;
     obj.userData.mat = mat;
@@ -413,6 +414,7 @@ export class ApartmentView {
       edges.position.copy(mesh.position);
       edges.rotation.copy(mesh.rotation);
       edges.userData = { ownMaterial: i === 0, role: 'edges' };
+      if (refMode) edges.renderOrder = 2; // nad czernią za oknami
       obj.add(edges);
       obj.userData.meshes.push(mesh);
       this.pickables.push(mesh);

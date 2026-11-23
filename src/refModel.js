@@ -15,8 +15,11 @@ export function refSettings(project) {
   if (!r.offset) r.offset = { x: 0, y: 0, z: 0, rot: 0 };
   if (!r.bind) r.bind = {};
   if (!r.show) r.show = 'model'; // 'model' | 'boxes' | 'both'
-  if (!r.mr) r.mr = { walls: 'transparent', wallOpacity: 0.3, floor: false, ceiling: false };
-  if (!r.model) r.model = { walls: 'solid', wallOpacity: 0.5, floor: true, ceiling: true };
+  // wygląd: pomieszczenie (ściany + podłoga + sufit) i meble — każde: 'solid' | 'transparent' | 'off'
+  const def = () => ({ room: 'solid', roomOpacity: 0.4, furn: 'solid', furnOpacity: 0.5 });
+  if (!r.mr || !r.mr.room) r.mr = def(); // (starsze ustawienia ściany/podłoga/sufit → nowe domyślne)
+  if (!r.model || !r.model.room) r.model = def();
+  if (r.cams === undefined) r.cams = false; // miejsca zdjęć (kamery) przy poprawionym modelu
   return r;
 }
 
@@ -84,6 +87,7 @@ export function guessType(name) {
 }
 
 const _v = new THREE.Vector3();
+const _inv = new THREE.Matrix4();
 
 /** Punkty (x,z) i zakres y geometrii obiektu w układzie `frameInv` (macierz odwrotna ramki). */
 function sampleObject(obj, frameInv, maxPts = 4000) {
@@ -142,7 +146,6 @@ export class RefModel {
     this.ceilingObjs = [];
     this.floorObjs = [];
     this.pieceList = []; // { key, name, obj, orig: Matrix4 }
-    this.wallMaterials = new Map();
     this.offset = { x: 0, y: 0, z: 0, rot: 0 };
 
     scene.updateMatrixWorld(true);
@@ -193,7 +196,6 @@ export class RefModel {
         const center = ud.center ? new THREE.Vector3(ud.center.x, ud.center.y || 0, ud.center.z) : new THREE.Vector3(b ? (b[0] + b[2]) / 2 : 0, 0, b ? (b[1] + b[3]) / 2 : 0);
         const out = ud.out ? new THREE.Vector3(ud.out.x, 0, ud.out.z).normalize() : null;
         this.walls.push({ obj: ch, out, center });
-        this.cloneMaterials(ch);
       } else if (isCeilingNode(ch) || (b && b.y0 > this.ceilingY * 0.6)) {
         this.ceilingObjs.push(ch); // sufit i to, co z niego zwisa (lampa)
       } else if (isFloorNode(ch)) {
@@ -204,19 +206,62 @@ export class RefModel {
     const all = bboxOf(this.walls.map((w) => [w.center.x, w.center.z]));
     const mid = new THREE.Vector3((all[0] + all[2]) / 2, 0, (all[1] + all[3]) / 2);
     for (const w of this.walls) if (!w.out) w.out = new THREE.Vector3(w.center.x - mid.x, 0, w.center.z - mid.z).normalize();
-    this.look = { walls: 'solid', wallOpacity: 0.5, floor: true, ceiling: true };
+    // własne kopie materiałów: osobno pomieszczenie i meble (przezroczystość ustawiana niezależnie)
+    this.roomMats = this.cloneMaterials(this.statics);
+    this.furnMats = this.cloneMaterials(this.pieces);
+    // obrys modelu (do sprawdzania, czy oko jest w środku)
+    let bb = null;
+    for (const ch of this.statics.children) {
+      const b = ch.userData.refBox;
+      if (!b) continue;
+      bb = bb ? [Math.min(bb[0], b[0]), Math.min(bb[1], b[1]), Math.max(bb[2], b[2]), Math.max(bb[3], b[3])] : [b[0], b[1], b[2], b[3]];
+    }
+    this.bounds = bb || [-3, -3, 3, 3];
+    // „czarna skrzynka” za oknami i drzwiami: widoczna tylko tam, gdzie nie narysowano modelu (stencil)
+    const pad = 2;
+    const sx = this.bounds[2] - this.bounds[0] + 2 * pad, sz = this.bounds[3] - this.bounds[1] + 2 * pad;
+    const shellGeo = new THREE.BoxGeometry(sx, this.ceilingY + 2 * pad, sz);
+    shellGeo.translate((this.bounds[0] + this.bounds[2]) / 2, this.ceilingY / 2, (this.bounds[1] + this.bounds[3]) / 2);
+    this.shell = new THREE.Mesh(shellGeo, new THREE.MeshBasicMaterial({
+      color: 0x000000, side: THREE.BackSide, transparent: true, opacity: 1, depthWrite: false,
+      stencilWrite: true, stencilRef: 1, stencilFunc: THREE.NotEqualStencilFunc,
+      stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp,
+    }));
+    this.shell.renderOrder = 1; // po ścianach (także półprzezroczystych), przed etykietami i panelem
+    this.shell.frustumCulled = false;
+    this.shell.visible = false;
+    this.statics.add(this.shell);
+    this.blackout = false;
+    this.look = { room: 'solid', roomOpacity: 0.4, furn: 'solid', furnOpacity: 0.5 };
     this.eye = null;
   }
 
-  cloneMaterials(obj) {
-    obj.traverse((o) => {
+  /** Kopiuje materiały w poddrzewie; zwraca listę kopii. Każda kopia zaznacza swoje piksele w stencilu. */
+  cloneMaterials(root) {
+    const map = new Map();
+    root.traverse((o) => {
       if (!o.isMesh) return;
       const swap = (m) => {
-        if (!this.wallMaterials.has(m)) { const c = m.clone(); c.userData.base = { transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite }; this.wallMaterials.set(m, c); }
-        return this.wallMaterials.get(m);
+        if (!map.has(m)) {
+          const c = m.clone();
+          c.userData.base = { transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite };
+          if (!m.transparent) {
+            // szyby (przezroczyste z natury) zostawiają stencil pusty → za oknem widać czerń
+            Object.assign(c, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
+          }
+          map.set(m, c);
+        }
+        return map.get(m);
       };
       o.material = Array.isArray(o.material) ? o.material.map(swap) : swap(o.material);
     });
+    return [...map.values()];
+  }
+
+  /** Czerń za oknami i drzwiami zamiast obrazu z kamer (MR i spacer w AR). */
+  setBlackout(on) {
+    this.blackout = !!on;
+    this.updateCutaway(this.eye);
   }
 
   /** Przesunięcie całego modelu (gdy model AI nie leży dokładnie w układzie projektu). */
@@ -234,18 +279,25 @@ export class RefModel {
     this.statics.updateMatrixWorld(true);
   }
 
-  /** Wygląd: { walls: 'solid'|'transparent'|'off', wallOpacity, floor, ceiling } */
+  /** Wygląd: { room: 'solid'|'transparent'|'off', roomOpacity, furn: 'solid'|'transparent'|'off', furnOpacity } */
   setLook(look) {
-    this.look = { ...this.look, ...look };
-    const op = this.look.walls === 'transparent' ? this.look.wallOpacity : 1;
-    for (const m of this.wallMaterials.values()) {
-      const b = m.userData.base;
-      m.transparent = op < 1 || b.transparent;
-      m.opacity = op < 1 ? b.opacity * op : b.opacity;
-      m.depthWrite = op < 1 ? false : b.depthWrite;
-      m.needsUpdate = true;
-    }
-    for (const o of this.floorObjs) o.visible = !!this.look.floor;
+    const l = { ...this.look, ...(look || {}) };
+    if (!l.room) l.room = 'solid';
+    if (!l.furn) l.furn = 'solid';
+    this.look = l;
+    const apply = (mats, op, keepDepth) => {
+      for (const m of mats) {
+        const b = m.userData.base;
+        m.transparent = op < 1 || b.transparent;
+        m.opacity = op < 1 ? b.opacity * op : b.opacity;
+        // meble półprzezroczyste zapisują głębię: widać „ducha” mebla bez jego wnętrza
+        m.depthWrite = op < 1 ? keepDepth : b.depthWrite;
+        m.needsUpdate = true;
+      }
+    };
+    apply(this.roomMats, l.room === 'transparent' ? l.roomOpacity : 1, false);
+    apply(this.furnMats, l.furn === 'transparent' ? l.furnOpacity : 1, true);
+    this.pieces.visible = l.furn !== 'off';
     this.updateCutaway(this.eye);
   }
 
@@ -255,14 +307,25 @@ export class RefModel {
    */
   updateCutaway(eye) {
     this.eye = eye ? eye.clone() : null;
-    const off = this.look.walls === 'off';
+    const off = this.look.room === 'off';
+    for (const ch of this.statics.children) if (ch !== this.shell) ch.visible = !off;
+    if (off) { this.shell.visible = false; return; }
     for (const w of this.walls) {
-      let vis = !off;
-      if (vis && eye && w.c) vis = _v.subVectors(eye, w.c).setY(0).dot(w.o) <= 0.05;
+      let vis = true;
+      if (eye && w.c) vis = _v.subVectors(eye, w.c).setY(0).dot(w.o) <= 0.05;
       w.obj.visible = vis;
     }
-    const ceilVis = this.look.ceiling && !(eye && eye.y > this.ceilingY + (this.offset.y || 0) - 0.05);
+    const top = this.ceilingY + (this.offset.y || 0);
+    const ceilVis = !(eye && eye.y > top - 0.05);
     for (const o of this.ceilingObjs) o.visible = ceilVis;
+    // czerń za otworami tylko wtedy, gdy oko jest w środku modelu (nie na makiecie)
+    let inside = false;
+    if (eye) {
+      const loc = _v.copy(eye).applyMatrix4(_inv.copy(this.offsetMatrix || _inv.identity()).invert());
+      const b = this.bounds;
+      inside = loc.x > b[0] && loc.x < b[2] && loc.z > b[1] && loc.z < b[3] && loc.y < top;
+    }
+    this.shell.visible = this.blackout && inside;
   }
 
   // ---------- meble ----------

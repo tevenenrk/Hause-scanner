@@ -72,7 +72,9 @@ Bez instalacji i bez budowania. To statyczna strona: HTML, JS i dołączona loka
 - model musi leżeć w układzie z paczki (`scena.json`: metry, Y w górę, podłoga y = 0); jeśli jest przesunięty, popraw to polem „Przesunięcie modelu”,
 - meble z modelu (dzieci węzła `Meble`) same łączą się z bryłami projektu po położeniu i nazwie. Te, które nie mają pary (np. dywan, krzesełko), dostają nowe bryły. Bryła jest niewidoczna, a realistyczny mebel jedzie razem z nią, więc przesuwanie, wersje układu i kolizje działają tak jak dla brył. Parę zmienisz w panelu mebla („✨ Poprawiony model”),
 - widok: **model** / **model + krawędzie brył** / **same bryły**. Ściany od strony patrzącego i sufit chowają się same (przekrój jak w domku dla lalek). W trybach „Ściany” i „Pokoje” widać bryły,
-- w goglach model działa w **makiecie**, na **spacerze** (z sufitem i lampą) i **w mieszkaniu (MR 1:1)**: nakłada się na prawdziwy pokój tym samym wyrównaniem co bryły. W zakładce „Widok” ustawisz ściany modelu (pełne / półprzezroczyste / ukryte), podłogę oraz sufit; ustawienia są osobne dla MR i dla makiety/spaceru. Na ekranie startowym przełącznik „✨ Poprawiony model / ▢ Bryły”,
+- w goglach model działa w **makiecie**, na **spacerze** (z sufitem i lampą) i **w mieszkaniu (MR 1:1)**: nakłada się na prawdziwy pokój tym samym wyrównaniem co bryły. Na ekranie startowym jest przełącznik „✨ Poprawiony model / ▢ Bryły”,
+- wygląd to dwa ustawienia (zakładka „Widok” w goglach, karta modelu na PC): **ściany, podłoga i sufit** oraz **meble**, każde pełne / półprzezroczyste / ukryte. Ponowne „Półprzezr.” zmienia stopień przezroczystości (40% → 70% → 15%). Ustawienia są osobne dla MR i dla makiety/spaceru,
+- gdy stoisz w środku modelu w AR (MR 1:1 albo spacer), **za oknami i drzwiami jest czerń**, a nie obraz z kamer. Miejsca zdjęć (różowe kamery) i kontury brył są przy modelu ukryte; kamery włączysz w „Widoku”,
 - model jest zapisywany w projekcie i w pełnym eksporcie JSON, więc przenosi się na Questa razem z projektem (eksport „bez siatek” go pomija).
 
 **Gotowy model w VR (bez bycia w mieszkaniu)**

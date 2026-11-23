@@ -1908,10 +1908,13 @@ export class Editor {
     const bound = rm ? rm.pieceList.filter((pc) => st.bind[pc.key]).length : 0;
     const o = st.offset;
     const sel = (v, n) => `<option value="${v}" ${st.show === v ? 'selected' : ''}>${n}</option>`;
+    const lk = (k) => [['solid', 'pełne'], ['transparent', 'półprzezroczyste'], ['off', 'ukryte']].map(([v, n]) => `<option value="${v}" ${st.model[k] === v ? 'selected' : ''}>${n}</option>`).join('');
     return `<div class="card"><b>✨ Poprawiony model</b>
       <div class="sub">${esc(m.name)} · ${(m.size / 1048576).toFixed(1)} MB${rm ? ` · ${rm.pieceList.length} mebli, ${bound} połączonych z bryłami` : ' · wczytywanie…'}</div>
       <div class="row"><span>Pokazuj</span><select data-k="refShow">${sel('model', 'model (bryły niewidoczne)')}${sel('both', 'model + krawędzie brył')}${sel('boxes', 'tylko bryły')}</select></div>
-      <div class="note">W trybach „Ściany” i „Pokoje” zawsze widać bryły. Kliknij mebel z modelu, żeby go przesunąć.</div>
+      <div class="row"><span>Ściany, podłoga, sufit</span><select data-k="refRoom">${lk('room')}</select></div>
+      <div class="row"><span>Meble</span><select data-k="refFurn">${lk('furn')}</select></div>
+      <div class="note">Dotyczy PC, makiety i spaceru. W trybie „W mieszkaniu” w goglach ustawiasz to osobno (zakładka Widok). W trybach „Ściany” i „Pokoje” zawsze widać bryły. Kliknij mebel z modelu, żeby go przesunąć.</div>
       <details data-sec="refOffset" ${this.propOpen && this.propOpen.refOffset ? 'open' : ''}><summary>Przesunięcie modelu</summary><div class="body">
         <div class="row3"><label>X [cm]<input type="number" data-k="refX" value="${cm(o.x)}" step="1"></label><label>Z [cm]<input type="number" data-k="refZ" value="${cm(o.z)}" step="1"></label><label>Obrót [°]<input type="number" data-k="refRot" value="${Math.round(deg(o.rot) * 10) / 10}" step="0.5"></label></div>
         <div class="row"><span>Wysokość [cm]</span><input type="number" data-k="refY" value="${cm(o.y)}" step="1"></div>
@@ -1928,6 +1931,8 @@ export class Editor {
     const st = refSettings(this.project);
     const n = parseFloat(String(v).replace(',', '.'));
     if (k === 'refShow') st.show = v;
+    else if (k === 'refRoom') st.model.room = v;
+    else if (k === 'refFurn') st.model.furn = v;
     else if (!isFinite(n)) return;
     else if (k === 'refX') st.offset.x = n / 100;
     else if (k === 'refZ') st.offset.z = n / 100;
@@ -1942,7 +1947,7 @@ export class Editor {
     if (t.matches('[data-reffile]')) { if (t.files[0]) this.importRefModel(t.files[0]); t.value = ''; return; }
     const k = t.dataset.k;
     if (!k) return;
-    if (/^ref(Show|X|Z|Y|Rot)$/.test(k)) { this.onRefChange(k, t.value); return; }
+    if (/^ref(Show|Room|Furn|X|Z|Y|Rot)$/.test(k)) { this.onRefChange(k, t.value); return; }
     const s = this.selection;
     const sel = this.selected();
     if (!sel) return;
